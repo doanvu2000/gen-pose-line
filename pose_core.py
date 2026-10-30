@@ -13,6 +13,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 CACHE_DIR = os.path.join(ROOT, ".cache", "masks")
 # rembg defaults to ~/.rembg (or ~/.u2net) on the system drive; keep the large models next to the tool instead.
 os.environ.setdefault("U2NET_HOME", os.path.join(ROOT, ".cache", "models"))
+MODEL_DIR = os.environ["U2NET_HOME"]
 MODELS = ["isnet-general-use", "u2net_human_seg", "u2net", "birefnet-portrait"]
 STROKES = ["none", "solid", "dash", "dots"]
 SOURCES = ["photo", "lineart"]
@@ -73,10 +74,14 @@ def _session(model):
     return _sessions[model]
 
 
-def _providers():
+DEVICES = ["auto", "cuda", "coreml", "cpu"]
+_PROVIDER = {"cuda": "CUDAExecutionProvider", "coreml": "CoreMLExecutionProvider", "cpu": "CPUExecutionProvider"}
+
+
+def _providers(want=None):
     import onnxruntime as ort
     av = ort.get_available_providers()
-    want = os.environ.get("POSE_TOOL_DEVICE", "auto").lower()
+    want = (want or os.environ.get("POSE_TOOL_DEVICE", "auto")).lower()
     order = []
     if want in ("auto", "cuda") and "CUDAExecutionProvider" in av:
         if hasattr(ort, "preload_dlls"):
@@ -91,9 +96,140 @@ def _providers():
     return order
 
 
+def set_device(want):
+    want = (want or "auto").lower()
+    if want not in DEVICES:
+        raise ValueError(f"Thiết bị không hợp lệ: {want}")
+    os.environ["POSE_TOOL_DEVICE"] = want
+    _sessions.clear()
+
+
+def active_provider(model="isnet-general-use"):
+    # ORT silently falls back to CPU when CUDA/CoreML fail to initialise, so ask the live session.
+    try:
+        return _session(model).inner_session.get_providers()[0]
+    except Exception:
+        return _providers()[0]
+
+
 def device_info():
     import onnxruntime as ort
     return ", ".join(p.replace("ExecutionProvider", "") for p in _providers()) + f" (ORT {ort.__version__})"
+
+
+def _run(cmd):
+    import subprocess
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=5).stdout.strip()
+    except Exception:
+        return ""
+
+
+def _cpu_name():
+    import platform
+    if os.name == "nt":
+        try:
+            import winreg
+            k = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
+            return winreg.QueryValueEx(k, "ProcessorNameString")[0].strip()
+        except Exception:
+            pass
+    if platform.system() == "Darwin":
+        return _run(["sysctl", "-n", "machdep.cpu.brand_string"]) or platform.machine()
+    try:
+        with open("/proc/cpuinfo", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("model name"):
+                    return line.split(":", 1)[1].strip()
+    except Exception:
+        pass
+    return platform.processor() or platform.machine()
+
+
+def _gpus():
+    import platform
+    out = _run(["nvidia-smi", "--query-gpu=name,memory.total,driver_version", "--format=csv,noheader,nounits"])
+    gpus = []
+    for line in out.splitlines():
+        parts = [x.strip() for x in line.split(",")]
+        if len(parts) == 3:
+            gpus.append({"vendor": "nvidia", "name": parts[0], "vram_mb": int(float(parts[1] or 0)), "driver": parts[2]})
+    if platform.system() == "Darwin" and platform.machine() == "arm64":
+        gpus.append({"vendor": "apple", "name": "GPU + Neural Engine tích hợp (Apple Silicon)", "vram_mb": 0, "driver": ""})
+    return gpus
+
+
+def hardware_info():
+    import platform
+    import onnxruntime as ort
+    from importlib import metadata
+    pkgs = []
+    for name in ("onnxruntime-gpu", "onnxruntime", "onnxruntime-silicon"):
+        try:
+            pkgs.append(f"{name} {metadata.version(name)}")
+        except Exception:
+            pass
+    av = ort.get_available_providers()
+    gpus = _gpus()
+    want = os.environ.get("POSE_TOOL_DEVICE", "auto").lower()
+    avail = {"auto": True, "cpu": True, "cuda": "CUDAExecutionProvider" in av, "coreml": "CoreMLExecutionProvider" in av}
+    hints = []
+    is_mac = platform.system() == "Darwin"
+    if any(g["vendor"] == "nvidia" for g in gpus) and not avail["cuda"]:
+        hints.append("Máy có GPU NVIDIA nhưng đang cài onnxruntime bản CPU. Chạy run_win_gpu.bat (Windows) để dùng GPU.")
+    if is_mac and avail["coreml"] and want != "coreml":
+        hints.append("Mac có thể thử CoreML (GPU/Neural Engine). Bấm Kiểm tra tốc độ để so với CPU trước khi chọn.")
+    if not gpus and not is_mac:
+        hints.append("Không thấy GPU NVIDIA. Xử lý bằng CPU.")
+    return {
+        "os": f"{platform.system()} {platform.release()} ({platform.machine()})",
+        "cpu": _cpu_name(),
+        "cores": os.cpu_count(),
+        "gpus": gpus,
+        "ort": ort.__version__,
+        "packages": pkgs,
+        "providers": [p.replace("ExecutionProvider", "") for p in av],
+        "available": avail,
+        "selected": want,
+        "active": active_provider().replace("ExecutionProvider", ""),
+        "hints": hints,
+        "model_dir": MODEL_DIR,
+        "models": _model_sizes(),
+    }
+
+
+def _model_sizes():
+    out = []
+    base = os.path.join(MODEL_DIR, "models")
+    for name in sorted(os.listdir(base)) if os.path.isdir(base) else []:
+        d = os.path.join(base, name)
+        size = sum(os.path.getsize(os.path.join(dp, f)) for dp, _, fs in os.walk(d) for f in fs)
+        out.append({"name": name, "mb": round(size / 1024 ** 2, 1)})
+    return out
+
+
+def benchmark(want, model="isnet-general-use", runs=3):
+    import time
+    import onnxruntime as ort
+    if want != "auto" and _PROVIDER[want] not in ort.get_available_providers():
+        return {"device": want, "ok": False, "error": "Không khả dụng trên máy này"}
+    from rembg import new_session, remove
+    img = Image.new("RGB", (768, 1024), (180, 160, 140))
+    ImageDraw.Draw(img).ellipse((250, 150, 520, 900), fill=(60, 50, 45))
+    t = time.time()
+    try:
+        sess = new_session(model, providers=_providers(want))
+        remove(img, session=sess, only_mask=True)
+        first = time.time() - t
+        times = []
+        for _ in range(runs):
+            t = time.time()
+            remove(img, session=sess, only_mask=True)
+            times.append(time.time() - t)
+        used = sess.inner_session.get_providers()[0].replace("ExecutionProvider", "")
+    except Exception as e:
+        return {"device": want, "ok": False, "error": str(e)}
+    return {"device": want, "ok": True, "used": used, "first_ms": int(first * 1000), "ms": int(sorted(times)[len(times) // 2] * 1000)}
 
 
 def person_mask(img: Image.Image, model: str) -> np.ndarray:

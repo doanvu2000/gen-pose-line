@@ -3,6 +3,7 @@ import glob
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -13,19 +14,33 @@ import uuid
 import webbrowser
 
 from flask import Flask, jsonify, request, send_from_directory
-from PIL import Image
+from PIL import Image, ImageOps
 
 import pose_core as pc
 
 ROOT = pc.ROOT
 DL_DIR = os.path.join(ROOT, ".cache", "download")
 STYLE_DIR = os.path.join(ROOT, "styles")
+INPUT_DIR = os.path.join(ROOT, ".cache", "inputs")
+OUTPUT_DIR = os.path.join(ROOT, "output")
 IMG_EXT = (".png", ".jpg", ".jpeg", ".webp")
 UA = {"User-Agent": "Mozilla/5.0 PoseLineTool"}
 
 app = Flask(__name__, static_folder=os.path.join(ROOT, "static"), static_url_path="/static")
+app.config["MAX_FORM_PARTS"] = 20000
+app.config["MAX_CONTENT_LENGTH"] = 4 * 1024 ** 3
 work_lock = threading.Lock()
+pick_lock = threading.Lock()
 uploads = {}
+SCAN_CAP = 50000
+
+
+@app.before_request
+def same_origin_only():
+    # Any web page can POST to 127.0.0.1 without preflight; only accept writes from this app's own pages.
+    origin = request.headers.get("Origin")
+    if request.method == "POST" and origin and origin.split("://", 1)[-1] != request.host:
+        return jsonify(error="Yêu cầu bị chặn (khác nguồn)"), 403
 
 
 def _b64(img, fmt="PNG", max_side=None):
@@ -47,8 +62,10 @@ def _fetch(url):
     if not os.path.exists(path):
         with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=60) as r:
             data = r.read()
-        with open(path, "wb") as f:
+        tmp = f"{path}.{uuid.uuid4().hex[:6]}.part"
+        with open(tmp, "wb") as f:
             f.write(data)
+        os.replace(tmp, path)
     return path
 
 
@@ -57,7 +74,7 @@ def _load(path):
         path = _fetch(path)
     im = Image.open(path)
     im.load()
-    return im
+    return ImageOps.exif_transpose(im)
 
 
 @app.get("/")
@@ -92,6 +109,7 @@ def upload():
     for f in request.files.getlist("files"):
         im = Image.open(f.stream)
         im.load()
+        im = ImageOps.exif_transpose(im)
         uid = uuid.uuid4().hex[:10]
         uploads[uid] = (f.filename, im)
         out.append({"id": uid, "name": f.filename, "thumb": _b64(im.convert("RGB"), "JPEG", 240), "hasAlpha": im.mode in ("RGBA", "LA", "P") and _has_alpha(im)})
@@ -159,6 +177,31 @@ def preview():
     return jsonify(view=_b64(view, "JPEG", 1400), overlay=_b64(ov), size=list(ov.size), ms=int(dt * 1000))
 
 
+@app.get("/api/device")
+def device():
+    return jsonify(pc.hardware_info())
+
+
+@app.post("/api/device")
+def device_set():
+    try:
+        with work_lock:
+            pc.set_device((request.json or {}).get("device"))
+            info = pc.hardware_info()
+    except ValueError as e:
+        return jsonify(error=str(e)), 400
+    return jsonify(info)
+
+
+@app.post("/api/device/test")
+def device_test():
+    want = (request.json or {}).get("device", "auto")
+    if want not in pc.DEVICES:
+        return jsonify(error="Thiết bị không hợp lệ"), 400
+    with work_lock:
+        return jsonify(pc.benchmark(want))
+
+
 @app.post("/api/style/save")
 def style_save():
     body = request.json or {}
@@ -171,12 +214,14 @@ def style_save():
     return jsonify(ok=True, name=name)
 
 
-def _scan(folder):
+def _scan(folder, cap=None):
     out = []
     for dp, _, fs in os.walk(folder):
         for f in sorted(fs):
             if f.lower().endswith(IMG_EXT):
                 out.append(os.path.join(dp, f))
+                if cap and len(out) >= cap:
+                    return sorted(out)
     return sorted(out)
 
 
@@ -304,7 +349,7 @@ class Batch:
                 status, err = "err", str(e)
                 self.state["errors"].append(f"{rel}: {e}")
                 self.error_items.append({"file": rel, "src": src, "error": err, "time": time.strftime("%Y-%m-%d %H:%M:%S")})
-            self.results.append({"i": len(self.results), "file": rel.replace(os.sep, "/"), "status": status, "error": err, "ms": int((time.time() - t0) * 1000)})
+            self.results.append({"i": len(self.results), "file": rel.replace(os.sep, "/"), "src": src, "status": status, "error": err, "ms": int((time.time() - t0) * 1000)})
             self.state["done"] += 1
 
 
@@ -363,6 +408,143 @@ def batch_file():
 def batch_stop():
     batch.stop.set()
     return jsonify(ok=True)
+
+
+@app.get("/api/batch/src")
+def batch_src():
+    i = request.args.get("i", -1, type=int)
+    results = batch.results
+    if not 0 <= i < len(results):
+        return jsonify(error="Không tìm thấy ảnh gốc"), 404
+    src = results[i]["src"]
+    if src.startswith("http://") or src.startswith("https://"):
+        src = _fetch(src)
+    if not src.lower().endswith(IMG_EXT) or not os.path.isfile(src):
+        return jsonify(error="Không tìm thấy ảnh gốc"), 404
+    return send_from_directory(os.path.dirname(os.path.abspath(src)), os.path.basename(src), max_age=0)
+
+
+def _stamp():
+    return time.strftime("%Y%m%d-%H%M%S")
+
+
+def _folder_info(path):
+    files = _scan(path, SCAN_CAP)
+    name = os.path.basename(os.path.normpath(path)) or "anh"
+    return {"input": path, "name": name, "count": len(files), "capped": len(files) >= SCAN_CAP, "sample": [os.path.relpath(f, path).replace(os.sep, "/") for f in files[:6]]}
+
+
+def _json_path():
+    body = request.get_json(silent=True) or {}
+    p = body.get("path", "")
+    return p.strip().strip('"') if isinstance(p, str) else ""
+
+
+@app.post("/api/folder/info")
+def folder_info():
+    p = _json_path()
+    if not p or not os.path.isdir(p):
+        return jsonify(error="Thư mục không tồn tại"), 404
+    info = _folder_info(p)
+    info["output"] = os.path.join(os.path.dirname(os.path.normpath(p)), info["name"] + "-line")
+    return jsonify(info)
+
+
+@app.post("/api/folder/pick")
+def folder_pick():
+    # The page cannot read real paths from the browser, so ask a native dialog in a child process (Tk needs its own main thread).
+    code = (
+        "import tkinter as tk\n"
+        "from tkinter import filedialog\n"
+        "r = tk.Tk(); r.withdraw(); r.attributes('-topmost', True); r.lift(); r.focus_force()\n"
+        "print(filedialog.askdirectory(parent=r, title='Chọn thư mục ảnh đầu vào') or '', end='')"
+    )
+    if not pick_lock.acquire(blocking=False):
+        return jsonify(error="Hộp chọn thư mục đang mở"), 409
+    try:
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        out = subprocess.run([sys.executable, "-c", code], capture_output=True, timeout=600, encoding="utf-8", env={**os.environ, "PYTHONIOENCODING": "utf-8"}, creationflags=flags)
+    except Exception as e:
+        return jsonify(error=f"Không mở được hộp chọn thư mục: {e}"), 500
+    finally:
+        pick_lock.release()
+    if out.returncode:
+        return jsonify(error="Không mở được hộp chọn thư mục: " + (out.stderr.strip().splitlines() or ["lỗi không rõ"])[-1]), 500
+    p = out.stdout.strip()
+    if not p:
+        return jsonify(cancelled=True)
+    info = _folder_info(os.path.normpath(p))
+    info["output"] = os.path.join(os.path.dirname(os.path.normpath(p)), info["name"] + "-line")
+    return jsonify(info)
+
+
+WIN_RESERVED = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(10)), *(f"lpt{i}" for i in range(10))}
+
+
+def _safe_parts(rel):
+    parts = []
+    for x in rel.replace("\\", "/").split("/"):
+        x = x.strip().rstrip(".")
+        if not x or x == ".." or ":" in x or x.split(".")[0].lower() in WIN_RESERVED or any(c in x for c in '<>"|?*') or any(ord(c) < 32 for c in x):
+            continue
+        parts.append(x)
+    return parts
+
+
+def _inside(path, root):
+    try:
+        return os.path.commonpath([os.path.realpath(path), os.path.realpath(root)]) == os.path.realpath(root)
+    except ValueError:
+        return False
+
+
+def _clean_inputs(keep):
+    if not os.path.isdir(INPUT_DIR):
+        return
+    busy = batch.state["running"] and batch.cfg.get("input", "")
+    for d in os.listdir(INPUT_DIR):
+        full = os.path.join(INPUT_DIR, d)
+        if d != keep and not (busy and _inside(busy, full)):
+            shutil.rmtree(full, ignore_errors=True)
+
+
+@app.post("/api/folder/upload")
+def folder_upload():
+    files = request.files.getlist("files")
+    rels = request.form.getlist("paths")
+    if not files or len(files) != len(rels):
+        return jsonify(error="Không nhận được ảnh"), 400
+    # Big folders arrive in several requests that share one session folder.
+    sid = request.form.get("session", "")
+    if not sid or not all(c.isalnum() or c == "-" for c in sid) or not os.path.isdir(os.path.join(INPUT_DIR, sid)):
+        sid = _stamp() + "-" + uuid.uuid4().hex[:6]
+        _clean_inputs(sid)
+    root = os.path.join(INPUT_DIR, sid)
+    saved = 0
+    for f, rel in zip(files, rels):
+        parts = _safe_parts(rel)
+        if not parts or not parts[-1].lower().endswith(IMG_EXT):
+            continue
+        dst = os.path.join(root, *parts)
+        if not _inside(dst, root):
+            continue
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        f.save(dst)
+        saved += 1
+    if not saved and not os.path.isdir(root):
+        return jsonify(error="Thư mục không có ảnh (.png .jpg .jpeg .webp)"), 400
+    os.makedirs(root, exist_ok=True)
+    tops = os.listdir(root)
+    base = os.path.join(root, tops[0]) if len(tops) == 1 and os.path.isdir(os.path.join(root, tops[0])) else root
+    info = _folder_info(base)
+    if base == root:
+        info["name"] = "anh-tha"
+    if not info["count"]:
+        return jsonify(error="Thư mục không có ảnh (.png .jpg .jpeg .webp)"), 400
+    info["output"] = os.path.join(OUTPUT_DIR, info["name"] + "-" + sid.split("-", 2)[0] + "-" + sid.split("-", 2)[1])
+    info["uploaded"] = True
+    info["session"] = sid
+    return jsonify(info)
 
 
 @app.post("/api/open")
