@@ -11,6 +11,8 @@ from skimage.morphology import skeletonize
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 CACHE_DIR = os.path.join(ROOT, ".cache", "masks")
+# rembg defaults to ~/.rembg (or ~/.u2net) on the system drive; keep the large models next to the tool instead.
+os.environ.setdefault("U2NET_HOME", os.path.join(ROOT, ".cache", "models"))
 MODELS = ["isnet-general-use", "u2net_human_seg", "u2net", "birefnet-portrait"]
 STROKES = ["none", "solid", "dash", "dots"]
 SOURCES = ["photo", "lineart"]

@@ -9,7 +9,15 @@ Cách làm: main agent chia việc → subagent code → subagent audit → main
 - [x] Đọc README/motion/icons ds, index.html (bản restyle bước đầu), app.py.
 - [x] app.py: `Batch.state.stopped`, `Batch.error_items` (file/src/error/time), `Batch.cfg`, `GET /api/batch/log`
       (state + config + toàn bộ lỗi + device + time). `/api/batch/status` giữ nguyên shape (+ `stopped`).
-- [ ] Subagent code index.html.
-- [ ] Subagent audit.
-- [ ] Main sửa theo audit, test trình duyệt.
+- [x] Commit `0b7bf62` (design system + /api/batch/log). Chủ nhân đã cho commit theo bước + tự chạy app test.
+- [x] Yêu cầu thêm: xem tiến trình gen + nút preview. app.py: `Batch.results` per file,
+      `GET /api/batch/results?since=N`, `GET /api/batch/file?f=rel` (chặn path ngoài thư mục ra).
+- [x] Subagent code index.html (state machine, log export, progress list + viewer, fullscreen, light).
+- [x] Test trình duyệt (venv .venv tạo mới): preview, batch 8 file + 1 lỗi, viewer ←/→/Esc, xuất log, dừng, fullscreen, không lỗi console.
+      Viewer nền mặc định → tối (nét trắng khó nhìn trên caro sáng).
+- [x] Model rembg: chủ nhân muốn ngoài C/F (sắp đầy) → `U2NET_HOME` mặc định `<ROOT>/.cache/models` (pose_core.py),
+      đã chuyển isnet-general-use 170MB từ C:\Users\dauph\.rembg sang. pip cache 4GB ở C — chưa xoá, hỏi chủ nhân.
+- [x] Audit (code-reviewer): 0 high, 8 med. Backend đã sửa: try/except start, finally running=false, lock start,
+      stopped chỉ khi dừng giữa chừng, results `started` + cap 1000 + since≥0, /api/open dùng subprocess + 404.
+- [ ] Frontend sửa theo audit (subagent đang làm).
 - [ ] Handoff.

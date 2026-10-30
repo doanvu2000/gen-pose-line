@@ -1,138 +1,656 @@
 <!doctype html>
-<html lang="vi">
+<html lang="vi" data-theme="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Pose Line Tool</title>
+<link rel="stylesheet" href="/static/design-system/ds.css">
 <style>
-:root{--bg:#f5f5f7;--card:#fff;--line:#e3e3e8;--text:#1d1d1f;--sub:#6e6e73;--acc:#0071e3;--ok:#1f9d55;--err:#d70015}
-*{box-sizing:border-box}
-body{margin:0;font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text)}
-header{display:flex;align-items:center;gap:16px;padding:10px 18px;background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
-header h1{font-size:16px;margin:0}
-header .dev{color:var(--sub);font-size:12px}
-.tabs{display:flex;gap:4px;margin-left:auto}
-.tabs button{border:0;background:none;padding:6px 14px;border-radius:8px;cursor:pointer;font:inherit;color:var(--sub)}
-.tabs button.on{background:var(--text);color:#fff}
-main{display:grid;grid-template-columns:330px minmax(0,1fr);gap:14px;padding:14px;min-height:calc(100vh - 50px)}
-.panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;overflow:auto;max-height:calc(100vh - 80px)}
-.group{border-top:1px solid var(--line);padding:10px 0 4px}
-.group:first-child{border-top:0;padding-top:0}
-.group h3{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--sub)}
-.row{display:grid;grid-template-columns:110px 1fr 46px;align-items:center;gap:8px;margin:6px 0}
-.row.two{grid-template-columns:110px 1fr}
-.row label{color:var(--sub);font-size:13px}
-.row output{font-variant-numeric:tabular-nums;text-align:right;font-size:12px;color:var(--sub)}
-input[type=range]{width:100%}
-select,input[type=text],input[type=number]{width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:8px;font:inherit;background:#fff}
-input[type=color]{width:100%;height:30px;border:1px solid var(--line);border-radius:8px;padding:2px;background:#fff}
-.btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 12px;cursor:pointer;font:inherit}
-.btn.pri{background:var(--acc);border-color:var(--acc);color:#fff}
-.btn.danger{color:var(--err)}
-.btn:disabled{opacity:.5;cursor:default}
-.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-.stage{display:flex;flex-direction:column;gap:10px;min-width:0}
-.thumbs{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px}
-.thumbs .t{flex:0 0 auto;width:74px;cursor:pointer;border:2px solid transparent;border-radius:8px;overflow:hidden;position:relative;background:#ddd}
-.thumbs .t img{width:100%;height:96px;object-fit:cover;display:block}
-.thumbs .t.on{border-color:var(--acc)}
-.thumbs .t span{position:absolute;left:0;right:0;bottom:0;font-size:10px;background:rgba(0,0,0,.55);color:#fff;padding:1px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.thumbs .t b{position:absolute;top:2px;right:2px;font-size:9px;background:#000a;color:#fff;border-radius:4px;padding:0 4px}
-.view{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;align-items:start}
-.view.single{grid-template-columns:1fr}
-.view figure{margin:0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px;position:relative}
-.view figcaption{font-size:12px;color:var(--sub);margin-bottom:6px}
-.view img{width:100%;max-height:calc(100vh - 290px);object-fit:contain;display:block;border-radius:6px;background:#222}
-.busy{position:absolute;top:10px;right:12px;font-size:12px;color:var(--sub)}
-.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
-.seg button{border:0;background:#fff;padding:6px 10px;cursor:pointer;font:inherit;font-size:13px}
-.seg button.on{background:var(--text);color:#fff}
-.muted{color:var(--sub);font-size:12px}
-.hide{display:none!important}
-.progress{height:10px;background:#e8e8ed;border-radius:6px;overflow:hidden}
-.progress i{display:block;height:100%;background:var(--acc);width:0;transition:width .3s}
-.errs{font:12px ui-monospace,Menlo,monospace;color:var(--err);white-space:pre-wrap;max-height:180px;overflow:auto}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
-.stat{display:flex;gap:18px;flex-wrap:wrap;font-variant-numeric:tabular-nums}
-.stat div b{display:block;font-size:20px}
-.drop{border:2px dashed var(--line);border-radius:12px;padding:10px;text-align:center;color:var(--sub)}
-.drop.over{border-color:var(--acc);color:var(--acc)}
-.check{display:flex;align-items:center;gap:6px;margin:6px 0;color:var(--sub);font-size:13px}
+:root { --sidebar-w: 320px; }
+
+.app { height: 100vh; height: 100dvh; }
+.body { grid-template-rows: minmax(0, 1fr); }
+.titlebar { -webkit-app-region: no-drag; }
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand-ic { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; background: var(--accent); color: var(--on-accent); }
+.brand b { font-size: 14px; font-weight: 650; }
+.tb-center { position: absolute; left: 50%; transform: translateX(-50%); }
+
+.seg .seg-label { display: inline-flex; align-items: center; gap: 5px; }
+.seg .seg-thumb { animation: mFade var(--dur-fade) var(--ease); }
+
+.side-inner { overflow: auto; padding: 6px 14px 18px; }
+.cgroup { padding: 14px 0 6px; border-top: 1px solid var(--sep2); }
+.cgroup:first-child { border-top: 0; }
+.cgroup h3 { margin: 0 0 8px; font-size: 11px; font-weight: 600; color: var(--text3); letter-spacing: .02em; }
+.crow { display: grid; grid-template-columns: 112px 1fr 40px; align-items: center; gap: 8px; min-height: 30px; }
+.crow.two { grid-template-columns: 112px 1fr; }
+.crow > label { color: var(--text2); font-size: 12.5px; line-height: 1.3; }
+.crow output { font: 500 11px var(--mono); color: var(--text3); text-align: right; font-variant-numeric: tabular-nums; }
+.check { display: flex; align-items: center; gap: 8px; min-height: 30px; color: var(--text2); font-size: 12.5px; }
+.cgroup .muted { font-size: 11.5px; margin-top: 8px; color: var(--text3); }
+input[type=range] { width: 100%; margin: 0; }
+input[type=color] { width: 100%; height: 28px; padding: 2px; border: 1px solid var(--sep); border-radius: 7px; background: var(--surface); }
+.side .inp, .side select.inp { height: 28px; font-size: 12.5px; }
+
+.stage { flex: 1; min-height: 0; overflow: auto; padding: 18px 24px 24px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.stage > * { flex: none; }
+.tb { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.tb .inp { width: auto; }
+.lbl-i { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text2); }
+
+.drop { margin-top: 10px; padding: 14px; border: 2px dashed var(--sep); border-radius: 12px; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--text2); font-size: 12.5px; text-align: center; transition: border-color .15s, background .15s, color .15s; }
+.drop .ic { color: var(--accent); }
+.drop.over { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--surface)); }
+
+.thumbs { display: flex; gap: 10px; overflow-x: auto; padding: 12px 4px 6px; margin: 0 -4px; }
+.thumbs:empty { display: none; }
+.thumbs .t { position: relative; flex: 0 0 auto; width: 80px; padding: 0; border: 0; text-align: left; border-radius: 9px; overflow: hidden; background: var(--surface2); box-shadow: var(--shadow-sm); transition: box-shadow .18s, translate .18s var(--ease); }
+.thumbs .t:hover { translate: 0 -2px; box-shadow: var(--shadow-md); }
+.thumbs .t.on { box-shadow: 0 0 0 2px var(--accent), var(--shadow-md); }
+.thumbs .t img { display: block; width: 100%; height: 100px; object-fit: cover; }
+.thumbs .t span { position: absolute; left: 0; right: 0; bottom: 0; padding: 2px 5px; font-size: 10px; font-weight: 500; color: var(--on-accent); background: rgba(0, 0, 0, .5); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.thumbs .t b { position: absolute; top: 4px; right: 4px; font: 600 9px/1 var(--mono); padding: 3px 4px; border-radius: 4px; color: var(--on-accent); background: rgba(0, 0, 0, .55); }
+
+.cmp { flex: 1 1 0; min-height: 280px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 14px; }
+.cmp.single { grid-template-columns: minmax(0, 1fr); }
+.cmp figure { position: relative; margin: 0; padding: 10px; min-height: 0; display: flex; flex-direction: column; background: var(--surface); border-radius: 12px; box-shadow: var(--shadow-sm); }
+.cmp figcaption { margin: 0 2px 8px; font-size: 11px; font-weight: 600; color: var(--text3); letter-spacing: .02em; }
+.fig-box { position: relative; flex: 1; min-height: 0; border-radius: 8px; background: var(--surface2); overflow: hidden; }
+.fig-box > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.fig-box > img:not([src]) { visibility: hidden; }
+.fig-box > .empty { position: absolute; inset: 0; padding: 20px; align-content: center; overflow: auto; }
+.fig-box > .empty .note { text-align: left; max-width: 520px; }
+.fig-box > .note { position: absolute; top: 10px; left: 10px; right: 10px; z-index: 2; box-shadow: var(--shadow-md); }
+.img-in { animation: imgIn .3s var(--ease); }
+.busy { position: absolute; top: 8px; right: 10px; z-index: 3; display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; border-radius: 11px; background: var(--surface); box-shadow: var(--shadow-md); font-size: 11.5px; color: var(--text2); }
+.busy::before { content: ""; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--accent-soft); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+.busy:empty { display: none; }
+
+.form { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 10px 14px; align-items: center; max-width: 760px; }
+.form > label { font-size: 12.5px; font-weight: 600; color: var(--text2); }
+.form .check { grid-column: 2; }
+.hint { margin: 14px 0 0; font-size: 12.5px; color: var(--text2); max-width: 760px; }
+.hint code { font: 500 11.5px var(--mono); padding: 1px 5px; border-radius: 4px; background: var(--gray-bg); }
+.acts { display: flex; gap: 8px; margin-top: 16px; }
+
+.card-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.card-h h3 { font-size: 13px; }
+.steps { display: flex; align-items: center; gap: 4px; }
+.step { display: flex; align-items: center; gap: 6px; padding: 3px 8px 3px 3px; border-radius: 10px; font-size: 12px; font-weight: 600; color: var(--text3); transition: color .2s; }
+.step-n { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 650; background: var(--gray-bg); color: var(--text2); transition: background .2s, color .2s, transform .25s var(--spring); }
+.step.cur { color: var(--text); }
+.step.cur .step-n { background: var(--accent); color: var(--on-accent); transform: scale(1.08); }
+.step.done .step-n { background: var(--green-bg); color: var(--green); }
+.step.warn .step-n { background: var(--orange-bg); color: var(--orange); }
+.step.err .step-n { background: var(--red-bg); color: var(--red); }
+.step.done, .step.warn, .step.err { color: var(--text2); }
+.step-c { position: relative; width: 18px; height: 2px; border-radius: 1px; background: var(--sep); overflow: hidden; }
+.step-c::after { content: ""; position: absolute; inset: 0; background: var(--green-solid); transform: scaleX(0); transform-origin: left; transition: transform .45s var(--ease); }
+.step-c.on::after { transform: scaleX(1); }
+
+.stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+.stats > div { padding: 12px; border-radius: 11px; background: var(--surface2); }
+.stats b { display: block; font: 700 22px/1.2 var(--display); font-variant-numeric: tabular-nums; }
+.stats span { font-size: 11.5px; color: var(--text3); }
+#sCur { margin-top: 12px; font-size: 12.5px; color: var(--text2); overflow-wrap: anywhere; }
+#sCur:empty { display: none; }
+#bNote { margin-top: 12px; }
+#sLast { display: block; max-height: 340px; max-width: 100%; margin-top: 12px; border-radius: 10px; }
+#sLast:not([src]) { display: none; }
+
+.r-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 14px 0 8px; }
+.seg .rc { color: var(--text3); font-variant-numeric: tabular-nums; }
+.rbox { max-height: 320px; overflow: auto; padding: 4px; border-radius: 10px; background: var(--surface2); }
+.rlist { list-style: none; margin: 0; padding: 0; }
+.rrow { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto 26px; align-items: center; gap: 4px 8px; min-height: 30px; padding: 2px 2px 2px 8px; border-radius: 7px; }
+.rrow:hover { background: var(--hover); }
+.rrow.cur { background: var(--accent-soft); }
+.rrow .spin { width: 10px; height: 10px; }
+.rrow .rname { font: 500 12px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rrow .rms { font: 500 11px var(--mono); color: var(--text3); font-variant-numeric: tabular-nums; }
+.rrow .rerr { grid-column: 2 / -1; padding-bottom: 4px; font-size: 11.5px; color: var(--red); overflow-wrap: anywhere; }
+.rrow .icon-btn { width: 26px; height: 26px; }
+.r-empty { padding: 14px 8px; font-size: 12px; text-align: center; }
+.r-more { margin-top: 6px; font-size: 11.5px; }
+.r-more:empty { display: none; }
+
+.dlg.viewer { width: min(1100px, calc(100vw - 40px)); height: calc(100vh - 60px); height: calc(100dvh - 60px); padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
+.viewer .v-head, .viewer .v-foot { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.viewer .v-head h2 { display: block; flex: 1; min-width: 0; font: 600 13px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.viewer .v-foot span { font-size: 12px; color: var(--text2); font-variant-numeric: tabular-nums; }
+.v-box { position: relative; flex: 1; min-height: 0; border-radius: 10px; overflow: hidden; }
+.v-box.dark { background: #1C1C1E; }
+.v-box.light { background: #EBEBEB; }
+.v-box img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.v-box .note { position: absolute; top: 12px; left: 12px; right: 12px; }
+.scrim { transition: opacity .18s var(--ease); }
+.modal-root.closing .scrim { opacity: 0; }
+.toast .toast-act { flex: none; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+
+.e-sec { margin-top: 10px; }
+.e-sec .lbl-s { display: block; margin-bottom: 6px; }
+.elist { list-style: none; margin: 0; max-height: 260px; white-space: normal; }
+.elist li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 12px; padding: 5px 0; border-bottom: 1px solid var(--sep2); }
+.elist li:last-child { border-bottom: 0; }
+.elist b { font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+.elist time { grid-column: 2; grid-row: 1; color: var(--text3); }
+.elist span { grid-column: 1 / -1; color: var(--red); overflow-wrap: anywhere; }
+#sErrsMore { margin-top: 6px; font-size: 11.5px; }
+#sErrsMore:empty { display: none; }
+
+.status .err-btn { color: var(--red); font-weight: 600; }
+#info:empty { display: none; }
+.menu { transform-origin: bottom left; }
+.hide { display: none !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  .m-stagger > * { animation-delay: 0s !important; }
+}
+@media (max-width: 980px) {
+  .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .cmp { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-auto-rows: minmax(0, 1fr); min-height: 520px; }
+}
 </style>
 </head>
 <body>
-<header>
-  <h1>Pose Line Tool</h1>
-  <span class="dev" id="dev"></span>
-  <div class="tabs"><button class="on" data-tab="try">Thử style</button><button data-tab="batch">Chạy hàng loạt</button></div>
-</header>
-<main>
-  <aside class="panel" id="controls"></aside>
-  <section class="stage" id="tab-try">
-    <div class="card">
-      <div class="bar">
-        <label class="btn">+ Thêm ảnh<input id="file" type="file" multiple accept="image/*" hidden></label>
-        <input id="addPath" type="text" placeholder="Hoặc dán đường dẫn file / thư mục / URL pose_lib.json" style="flex:1;min-width:240px">
-        <select id="addField" style="width:auto"><option value="previewUrl">JSON: ảnh chụp</option><option value="poseUrl">JSON: nét cũ</option></select>
-        <button class="btn" id="addBtn">Thêm</button>
-      </div>
-      <div class="drop" id="drop" style="margin-top:8px">Kéo thả ảnh vào đây · ảnh chụp (mode photo) hoặc PNG nét trắng cũ (mode lineart)</div>
-      <div class="thumbs" id="thumbs" style="margin-top:8px"></div>
+<div class="app">
+  <header class="titlebar">
+    <div class="brand">
+      <span class="brand-ic"><i data-icon="wand" data-size="16"></i></span>
+      <b>Pose Line Tool</b>
     </div>
-    <div class="bar">
-      <span class="seg" id="bg"><button data-v="photo" class="on">Trên ảnh</button><button data-v="checker">Nền caro</button><button data-v="dark">Nền tối</button><button data-v="light">Nền sáng</button></span>
-      <label class="muted">Làm tối ảnh <input type="range" id="dim" min="0" max="0.7" step="0.05" value="0.2" style="width:110px;vertical-align:middle"></label>
-      <label class="muted" id="refWrap">Ảnh nền cho lineart <select id="ref" style="width:180px"><option value="">(không)</option></select></label>
-      <span class="muted" id="info"></span>
-      <span style="margin-left:auto" class="bar">
-        <button class="btn" id="cmpBtn">So với gốc</button>
-        <button class="btn pri" id="dlBtn" disabled>Tải PNG</button>
-      </span>
+    <div class="seg tabs tb-center" role="tablist">
+      <button class="on" data-tab="try" role="tab" aria-selected="true" aria-controls="tab-try" id="tabbtn-try"><span class="seg-thumb"></span><span class="seg-label"><i data-icon="palette" data-size="14"></i>Thử style</span></button>
+      <button data-tab="batch" role="tab" aria-selected="false" aria-controls="tab-batch" id="tabbtn-batch"><span class="seg-label"><i data-icon="layers" data-size="14"></i>Chạy hàng loạt</span></button>
     </div>
-    <div class="view" id="view">
-      <figure id="origFig"><figcaption>Gốc</figcaption><img id="orig"></figure>
-      <figure><figcaption>Kết quả</figcaption><img id="out"><span class="busy" id="busy"></span></figure>
+    <div class="tb-right">
+      <button class="icon-btn" id="fsBtn" title="Toàn màn hình" aria-label="Toàn màn hình"><i data-icon="maximize" data-size="16"></i></button>
     </div>
-  </section>
-  <section class="stage hide" id="tab-batch">
-    <div class="card">
-      <div class="row two"><label>Đầu vào</label><input id="bIn" type="text" placeholder="Thư mục ảnh · hoặc URL/đường dẫn pose_lib.json"></div>
-      <div class="row two"><label>Thư mục ra</label><input id="bOut" type="text" placeholder="vd /Users/sep/Desktop/shape_lib_new"></div>
-      <div class="row two"><label>Bỏ hậu tố tên</label><input id="bSuf" type="text" placeholder="vd _t hoặc _o (ca-tinh-001_t → ca-tinh-001.png)"></div>
-      <div class="row two"><label>Lọc tên chứa</label><input id="bFlt" type="text" placeholder="để trống = tất cả"></div>
-      <div class="row two"><label>Giới hạn số ảnh</label><input id="bLim" type="number" min="0" value="0"></div>
-      <div class="row two"><label>Chiều cao tối đa</label><input id="bMaxH" type="number" min="0" value="0" title="0 = giữ nguyên kích thước"></div>
-      <label class="check"><input type="checkbox" id="bSkip" checked> Bỏ qua file đã có ở thư mục ra</label>
-      <p class="muted">Dùng style đang chỉnh ở cột trái (mode <b id="bMode"></b>). Đầu vào JSON: mode photo lấy <code>previewUrl</code>, tên file = id pose; mode lineart lấy <code>poseUrl</code>, giữ tên file cũ. Style được lưu kèm <code>_style.json</code> trong thư mục ra.</p>
-      <div class="bar"><button class="btn pri" id="bStart">Bắt đầu</button><button class="btn danger" id="bStop">Dừng</button><button class="btn" id="bOpen">Mở thư mục ra</button></div>
-    </div>
-    <div class="card">
-      <div class="progress"><i id="bBar"></i></div>
-      <div class="stat" style="margin-top:10px">
-        <div><b id="sDone">0/0</b><span class="muted">xong</span></div>
-        <div><b id="sOk">0</b><span class="muted">đã tạo</span></div>
-        <div><b id="sSkip">0</b><span class="muted">bỏ qua</span></div>
-        <div><b id="sErr">0</b><span class="muted">lỗi</span></div>
-        <div><b id="sTime">0s</b><span class="muted">thời gian</span></div>
-        <div><b id="sEta">–</b><span class="muted">còn lại</span></div>
-      </div>
-      <p class="muted" id="sCur"></p>
-      <img id="sLast" style="max-height:340px;border-radius:8px">
-      <div class="errs" id="sErrs"></div>
-    </div>
-  </section>
-</main>
-<script>
-const $ = s => document.querySelector(s);
-let META, style = {}, items = [], cur = null, bg = 'photo', lastOverlay = null, timer = null, seq = 0;
+  </header>
 
+  <div class="body">
+    <aside class="side">
+      <div class="side-inner" id="controls"></div>
+    </aside>
+
+    <div class="main">
+      <section class="stage m-view-enter" id="tab-try" role="tabpanel" aria-labelledby="tabbtn-try">
+        <div class="card-s">
+          <div class="tb">
+            <button type="button" class="btn primary" id="fileBtn"><i data-icon="plus" data-size="14"></i>Thêm ảnh</button><input id="file" type="file" multiple accept="image/*" hidden>
+            <input id="addPath" class="inp" type="text" placeholder="Hoặc dán đường dẫn file / thư mục / URL pose_lib.json" style="flex:1;min-width:240px">
+            <select id="addField" class="inp"><option value="previewUrl">JSON: ảnh chụp</option><option value="poseUrl">JSON: nét cũ</option></select>
+            <button class="btn" id="addBtn" disabled>Thêm</button>
+          </div>
+          <div class="drop" id="drop"><i data-icon="upload" data-size="16"></i>Kéo thả ảnh vào đây · ảnh chụp (chế độ Ảnh chụp) hoặc PNG nét trắng cũ (chế độ PNG nét)</div>
+          <div class="thumbs m-stagger" id="thumbs"></div>
+        </div>
+
+        <div class="tb">
+          <span class="seg" id="bg" role="radiogroup" aria-label="Nền xem trước">
+            <button data-v="photo" class="on" role="radio" aria-checked="true"><span class="seg-thumb"></span><span class="seg-label">Trên ảnh</span></button>
+            <button data-v="checker" role="radio" aria-checked="false"><span class="seg-label">Nền caro</span></button>
+            <button data-v="dark" role="radio" aria-checked="false"><span class="seg-label">Nền tối</span></button>
+            <button data-v="light" role="radio" aria-checked="false"><span class="seg-label">Nền sáng</span></button>
+          </span>
+          <label class="lbl-i">Làm tối ảnh <input type="range" id="dim" min="0" max="0.7" step="0.05" value="0.2" style="width:110px"></label>
+          <label class="lbl-i" id="refWrap">Ảnh nền cho lineart <select id="ref" class="inp" style="width:180px;height:28px"><option value="">(không)</option></select></label>
+          <span class="tb" style="margin-left:auto">
+            <button class="btn on" id="cmpBtn"><i data-icon="eye" data-size="14"></i>So với gốc</button>
+            <button class="btn primary" id="dlBtn" disabled><i data-icon="download" data-size="14"></i>Tải PNG</button>
+          </span>
+        </div>
+
+        <div class="cmp" id="view">
+          <figure id="origFig"><figcaption>Gốc</figcaption><div class="fig-box ck"><img id="orig" alt="Ảnh gốc"></div></figure>
+          <figure>
+            <figcaption>Kết quả</figcaption>
+            <div class="fig-box">
+              <img id="out" alt="Kết quả xem trước">
+              <div class="empty" id="outEmpty"></div>
+              <div class="note err hide" id="outErr" role="alert"><i data-icon="alert" data-size="15"></i><span></span></div>
+            </div>
+            <span class="busy" id="busy"></span>
+          </figure>
+        </div>
+      </section>
+
+      <section class="stage hide" id="tab-batch" role="tabpanel" aria-labelledby="tabbtn-batch">
+        <div class="card-s">
+          <div class="form" id="bForm">
+            <label for="bIn">Đầu vào</label><input id="bIn" class="inp" type="text" placeholder="Thư mục ảnh · hoặc URL/đường dẫn pose_lib.json">
+            <label for="bOut">Thư mục ra</label><input id="bOut" class="inp" type="text" placeholder="vd D:\pose\shape_lib_new">
+            <label for="bSuf">Bỏ hậu tố tên</label><input id="bSuf" class="inp" type="text" placeholder="vd _t hoặc _o (ca-tinh-001_t → ca-tinh-001.png)">
+            <label for="bFlt">Lọc tên chứa</label><input id="bFlt" class="inp" type="text" placeholder="để trống = tất cả">
+            <label for="bLim">Giới hạn số ảnh</label><input id="bLim" class="inp" type="number" min="0" value="0" style="width:140px">
+            <label for="bMaxH">Chiều cao tối đa</label><input id="bMaxH" class="inp" type="number" min="0" value="0" title="0 = giữ nguyên kích thước" style="width:140px">
+            <label class="check"><input type="checkbox" id="bSkip" checked> Bỏ qua file đã có ở thư mục ra</label>
+          </div>
+          <p class="hint">Dùng style đang chỉnh ở cột trái (chế độ <b id="bMode"></b>). Đầu vào JSON: chế độ Ảnh chụp lấy <code>previewUrl</code>, tên file = id pose; chế độ PNG nét lấy <code>poseUrl</code>, giữ tên file cũ. Style được lưu kèm <code>_style.json</code> trong thư mục ra.</p>
+          <div class="acts">
+            <button class="btn primary" id="bStart"></button>
+            <button class="btn" id="bStop" disabled></button>
+            <button class="btn ghost" id="bOpen"><i data-icon="folder" data-size="14"></i>Mở thư mục ra</button>
+          </div>
+        </div>
+
+        <div class="card-s">
+          <div class="card-h">
+            <h3>Tiến trình</h3>
+            <span class="chip c-gray" id="bChip">Chưa chạy</span>
+            <span class="grow"></span>
+            <div class="steps" id="bSteps" aria-label="Các bước"></div>
+          </div>
+          <div class="bar big"><i id="bBar" style="width:0"></i></div>
+          <div class="stats">
+            <div><b id="sDone">0/0</b><span>xong</span></div>
+            <div><b id="sOk">0</b><span>đã tạo</span></div>
+            <div><b id="sSkip">0</b><span>bỏ qua</span></div>
+            <div><b id="sErr">0</b><span>lỗi</span></div>
+            <div><b id="sTime">0s</b><span>thời gian</span></div>
+            <div><b id="sEta">–</b><span>còn lại</span></div>
+          </div>
+          <div class="note err hide" id="bNote" role="alert"><i data-icon="alert" data-size="15"></i><span></span></div>
+          <p id="sCur"></p>
+          <div class="r-head">
+            <span class="lbl-s">Từng file</span>
+            <span class="grow"></span>
+            <span class="seg" id="rFilter" role="radiogroup" aria-label="Lọc kết quả">
+              <button data-f="all" class="on" role="radio" aria-checked="true"><span class="seg-thumb"></span><span class="seg-label">Tất cả <span class="rc" data-c="all">0</span></span></button>
+              <button data-f="ok" role="radio" aria-checked="false"><span class="seg-label">Đã tạo <span class="rc" data-c="ok">0</span></span></button>
+              <button data-f="skip" role="radio" aria-checked="false"><span class="seg-label">Bỏ qua <span class="rc" data-c="skip">0</span></span></button>
+              <button data-f="err" role="radio" aria-checked="false"><span class="seg-label">Lỗi <span class="rc" data-c="err">0</span></span></button>
+            </span>
+          </div>
+          <div class="rbox">
+            <div class="rrow cur hide" id="rCur"><span class="spin"></span><span class="rname"></span><span class="rms">đang xử lý</span></div>
+            <ol class="rlist m-stagger" id="rList" tabindex="-1"></ol>
+            <p class="muted r-empty" id="rEmpty">Chưa có file nào được xử lý.</p>
+          </div>
+          <p class="muted r-more" id="rMore"></p>
+          <img id="sLast" class="ck" alt="Ảnh vừa xử lý">
+        </div>
+
+        <div class="card-s" id="errPanel">
+          <div class="card-h">
+            <h3>Lỗi</h3>
+            <span class="chip c-gray" id="eCount">0</span>
+            <span class="grow"></span>
+            <button class="btn sm" id="eCopy"><i data-icon="copy" data-size="13"></i>Sao chép</button>
+            <button class="btn sm" id="eTxt"><i data-icon="download" data-size="13"></i>Xuất log lỗi</button>
+            <button class="btn sm ghost" id="eJson"><i data-icon="file" data-size="13"></i>Xuất JSON</button>
+          </div>
+          <p class="muted" id="eEmpty">Không có lỗi.</p>
+          <div class="e-sec hide" id="bErrSec">
+            <span class="lbl-s">Hàng loạt</span>
+            <ol class="log elist m-stagger" id="sErrs"></ol>
+            <p class="muted" id="sErrsMore"></p>
+          </div>
+          <div class="e-sec hide" id="pErrSec">
+            <span class="lbl-s">Xem trước (gần đây)</span>
+            <ol class="log elist m-stagger" id="pErrs"></ol>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <footer class="status">
+    <span class="seg-i"><span class="dot idle" id="pDot"></span><span id="pState">Chưa có ảnh</span></span>
+    <span class="seg-i"><span class="dot idle" id="devDot"></span><span id="dev">Thiết bị: …</span></span>
+    <span class="seg-i" id="info"></span>
+    <span class="grow"></span>
+    <button class="st-btn err-btn hide" id="errBtn" title="Xuất log lỗi"><i data-icon="alert" data-size="12"></i><span id="errBtnN"></span></button>
+    <span class="seg-i"><span class="dot idle" id="bDot"></span><span id="bState">Hàng loạt: chưa chạy</span></span>
+  </footer>
+</div>
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+
+<script type="module">
+import { icon, hydrateIcons } from '/static/design-system/icons.js';
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+const pad = n => String(n).padStart(2, '0');
+const stamp = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+const fileStamp = (d = new Date()) => stamp(d).replace(/-/g, '').replace(' ', '-').replace(/:/g, '');
+const fmtDur = sec => { sec = Math.round(sec || 0); return sec < 60 ? sec + 's' : `${Math.floor(sec / 60)}m ${pad(sec % 60)}s`; };
+
+const MAX_PREVIEW_ERRS = 20;
+const MAX_BATCH_ERR_ROWS = 500;
+
+const state = {
+  meta: null,
+  style: {},
+  items: [],
+  cur: null,
+  bg: 'photo',
+  compare: true,
+  tab: 'try',
+  preview: {uploading: false, rendering: false, error: '', view: null, overlay: null, forId: null, size: null, ms: 0},
+  batch: {status: 'idle', s: null, msg: ''},
+  batchErrs: [],
+  previewErrors: [],
+  results: [],
+  resCount: {ok: 0, skip: 0, err: 0},
+  resFilter: 'all',
+  resOut: '',
+};
+
+const PREVIEW = {
+  idle: {label: 'Chưa có ảnh', dot: 'idle'},
+  uploading: {label: 'Đang tải ảnh…', dot: 'run'},
+  rendering: {label: 'Đang vẽ…', dot: 'run'},
+  ready: {label: 'Sẵn sàng', dot: ''},
+  error: {label: 'Lỗi', dot: 'err'},
+};
+const BATCH = {
+  idle: {label: 'Chưa chạy', chip: 'c-gray', dot: 'idle', bar: ''},
+  starting: {label: 'Đang khởi động', chip: 'c-blue', dot: 'run', bar: 'indeterminate'},
+  running: {label: 'Đang chạy', chip: 'c-blue', dot: 'run', bar: ''},
+  stopping: {label: 'Đang dừng', chip: 'c-orange', dot: 'warn', bar: ''},
+  stopped: {label: 'Đã dừng', chip: 'c-orange', dot: 'warn', bar: 'warn'},
+  done: {label: 'Hoàn tất', chip: 'c-green', dot: '', bar: 'green'},
+  done_err: {label: 'Xong, có lỗi', chip: 'c-red', dot: 'err', bar: 'err'},
+  failed: {label: 'Không bắt đầu được', chip: 'c-red', dot: 'err', bar: 'err'},
+};
+const ACTIVE = new Set(['starting', 'running', 'stopping']);
+
+function previewStatus() {
+  const p = state.preview;
+  if (p.uploading) return 'uploading';
+  if (p.rendering) return 'rendering';
+  if (p.error) return 'error';
+  return state.cur ? 'ready' : 'idle';
+}
+
+const itemById = id => state.items.find(i => i.id === id);
+
+function setHTML(el, html) {
+  if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
+}
+
+function setImg(img, src, animate) {
+  img.src = src;
+  if (!animate) return;
+  img.classList.remove('img-in'); void img.offsetWidth; img.classList.add('img-in');
+}
+
+const TOAST_ICON = {ok: 'check', info: 'help', warn: 'alert', err: 'alert'};
+function toast(text, kind = 'ok', action = null) {
+  const box = $('#toasts');
+  const el = document.createElement('button');
+  el.type = 'button';
+  el.className = `toast ${kind} m-toast-in`;
+  el.innerHTML = icon(TOAST_ICON[kind], 15) + '<span></span>';
+  el.querySelector('span').textContent = text;
+  if (action) {
+    const act = document.createElement('b');
+    act.className = 'toast-act';
+    act.textContent = action.label;
+    el.append(act);
+  }
+  let closed = false;
+  const close = () => {
+    if (closed) return; closed = true;
+    el.classList.replace('m-toast-in', 'm-toast-out');
+    el.addEventListener('animationend', () => el.remove(), {once: true});
+    // animationend never fires in a background tab, so don't rely on it alone.
+    setTimeout(() => el.remove(), 400);
+  };
+  el.onclick = () => { close(); action?.run(); };
+  box.appendChild(el);
+  while (box.children.length > 4) box.firstElementChild.remove();
+  setTimeout(close, action ? 8000 : kind === 'err' || kind === 'warn' ? 6000 : 3200);
+}
+
+async function api(url, opts) {
+  let r;
+  try { r = await fetch(url, opts); }
+  catch { throw new Error('Không kết nối được máy chủ'); }
+  let data = null;
+  try { data = await r.json(); } catch {}
+  if (data && data.error) throw new Error(data.error);
+  if (!r.ok || !data) throw new Error(`Lỗi máy chủ (HTTP ${r.status}${r.statusText ? ' ' + r.statusText : ''})`);
+  return data;
+}
+const getJSON = url => api(url);
+const post = (url, body) => api(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+
+function segSet(seg, val, key, aria) {
+  seg.querySelectorAll('button').forEach(b => {
+    const on = b.dataset[key] === val;
+    b.classList.toggle('on', on);
+    b.setAttribute(aria, on);
+    const th = b.querySelector('.seg-thumb');
+    if (on && !th) b.prepend(Object.assign(document.createElement('span'), {className: 'seg-thumb'}));
+    if (!on && th) th.remove();
+  });
+}
+
+function render() {
+  renderPreview();
+  renderBatch();
+  renderErrorsMeta();
+  renderStatus();
+}
+
+const EMPTY_IDLE = `${icon('image', 32)}<h3>Chưa có ảnh</h3><p>Kéo thả ảnh vào đây, chọn ảnh hoặc dán đường dẫn ở phía trên.</p><div class="actions"><button type="button" class="btn primary" data-pick-file>${icon('plus', 14)}Chọn ảnh</button></div>`;
+
+function renderPreview() {
+  const st = previewStatus(), p = state.preview, hasView = !!p.view;
+  $('#busy').textContent = st === 'uploading' ? 'Đang tải ảnh…' : st === 'rendering' ? 'Đang vẽ…' : '';
+  $('#out').classList.toggle('hide', !hasView);
+
+  const empty = $('#outEmpty');
+  let mode = '';
+  if (!hasView) mode = st === 'error' ? 'error' : st === 'idle' ? 'idle' : 'loading';
+  empty.classList.toggle('hide', !mode);
+  if (mode === 'idle') setHTML(empty, EMPTY_IDLE);
+  else if (mode === 'loading') setHTML(empty, `<span class="spin lg"></span><p>${esc(PREVIEW[st].label)}</p>`);
+  else if (mode === 'error') setHTML(empty, `${icon('alert', 32)}<h3>Không xem trước được</h3><div class="note err">${icon('alert', 15)}<span>${esc(p.error)}</span></div>`);
+
+  const showErr = st === 'error' && hasView;
+  $('#outErr').classList.toggle('hide', !showErr);
+  if (showErr) $('#outErr span').textContent = p.error;
+
+  const noCur = !state.cur;
+  $('#origFig').classList.toggle('hide', noCur || !state.compare);
+  $('#view').classList.toggle('single', noCur || !state.compare);
+  $('#cmpBtn').classList.toggle('on', state.compare);
+  $('#cmpBtn').disabled = noCur;
+  $('#dlBtn').disabled = !(st === 'ready' && hasView && p.forId === state.cur);
+
+  const busyUp = !!p.uploading;
+  $('#fileBtn').disabled = busyUp;
+  $('#file').disabled = busyUp;
+  const addBtn = $('#addBtn');
+  addBtn.disabled = busyUp || !$('#addPath').value.trim();
+  setHTML(addBtn, p.uploading === 'path' ? '<span class="spin"></span>Đang tải…' : 'Thêm');
+}
+
+// Steps are built once and only re-classed so the connector fill can transition.
+const stepsBox = $('#bSteps');
+stepsBox.innerHTML = ['Cấu hình', 'Đang chạy', 'Kết quả']
+  .map((n, i) => (i ? '<span class="step-c"></span>' : '') + `<span class="step"><span class="step-n"></span>${n}</span>`).join('');
+
+function renderSteps(status) {
+  const final = {stopped: 'warn', done: 'done', done_err: 'err'}[status];
+  const cls = ACTIVE.has(status) ? ['done', 'cur', ''] : final ? ['done', 'done', final] : ['cur', '', ''];
+  stepsBox.querySelectorAll('.step').forEach((el, i) => {
+    el.className = 'step ' + cls[i];
+    if (cls[i] === 'cur') el.setAttribute('aria-current', 'step'); else el.removeAttribute('aria-current');
+    setHTML(el.firstElementChild, cls[i] === 'done' ? icon('check', 12) : String(i + 1));
+  });
+  stepsBox.querySelectorAll('.step-c').forEach((c, i) => c.classList.toggle('on', cls[i] === 'done'));
+}
+
+function renderBatch() {
+  const b = state.batch, s = b.s || {}, cfg = BATCH[b.status];
+  const total = s.total || 0, done = s.done || 0, errN = s.error_count || 0;
+  const bar = $('#bBar');
+  bar.style.width = (total ? done / total * 100 : 0) + '%';
+  bar.parentElement.className = 'bar big ' + cfg.bar;
+  const chip = $('#bChip');
+  chip.className = 'chip ' + cfg.chip;
+  chip.textContent = cfg.label;
+  renderSteps(b.status);
+
+  $('#sDone').textContent = `${done}/${total}`;
+  $('#sOk').textContent = s.ok || 0;
+  $('#sSkip').textContent = s.skip || 0;
+  $('#sErr').textContent = errN;
+  $('#sTime').textContent = fmtDur(s.elapsed);
+  $('#sEta').textContent = b.status === 'running' && done ? fmtDur(s.elapsed / done * (total - done)) : '–';
+
+  let cur = '';
+  if (b.status === 'running' && !s.current) cur = 'Đang chuẩn bị…';
+  else if (b.status === 'stopping') cur = 'Đang dừng sau ảnh hiện tại…';
+  else if (['stopped', 'done', 'done_err'].includes(b.status) && s.out) cur = 'Thư mục ra: ' + s.out;
+  $('#sCur').textContent = cur;
+
+  const rCur = $('#rCur'), showCur = ACTIVE.has(b.status) && !!s.current;
+  rCur.classList.toggle('hide', !showCur);
+  if (showCur) { rCur.querySelector('.rname').textContent = s.current; rCur.querySelector('.rname').title = s.current; }
+  renderResultsMeta();
+
+  const note = $('#bNote');
+  note.classList.toggle('hide', b.status !== 'failed');
+  if (b.status === 'failed') note.querySelector('span').textContent = b.msg;
+
+  const last = $('#sLast');
+  if (s.last && last.getAttribute('src') !== s.last) setImg(last, s.last, true);
+  else if (!s.last && last.hasAttribute('src') && ACTIVE.has(b.status)) last.removeAttribute('src');
+
+  const active = ACTIVE.has(b.status);
+  const start = $('#bStart'), stop = $('#bStop');
+  start.disabled = active;
+  stop.disabled = b.status !== 'running';
+  setHTML(start, b.status === 'starting' ? '<span class="spin"></span>Đang khởi động…' : `${icon('play', 14)}Bắt đầu`);
+  setHTML(stop, b.status === 'stopping' ? '<span class="spin"></span>Đang dừng…' : `${icon('pause', 14)}Dừng`);
+  $('#bForm').querySelectorAll('input').forEach(i => i.disabled = active);
+}
+
+function renderErrorsMeta() {
+  const bN = state.batch.s?.error_count || state.batchErrs.length;
+  const pN = state.previewErrors.length;
+  const eCount = $('#eCount');
+  eCount.textContent = bN + pN;
+  eCount.className = 'chip ' + (bN + pN ? 'c-red' : 'c-gray');
+  $('#eEmpty').classList.toggle('hide', bN + pN > 0);
+  $('#bErrSec').classList.toggle('hide', !state.batchErrs.length);
+  $('#pErrSec').classList.toggle('hide', !pN);
+  const shown = Math.min(state.batchErrs.length, MAX_BATCH_ERR_ROWS);
+  $('#sErrsMore').textContent = bN > shown ? `Đang hiện ${shown}/${bN} lỗi — xuất log để xem đầy đủ.` : '';
+  $('#errBtn').classList.toggle('hide', !(bN + pN));
+  $('#errBtnN').textContent = `${bN + pN} lỗi`;
+}
+
+function renderStatus() {
+  const st = previewStatus(), p = state.preview;
+  $('#pDot').className = 'dot ' + PREVIEW[st].dot;
+  $('#pState').textContent = 'Xem trước: ' + PREVIEW[st].label.toLowerCase();
+  $('#info').textContent = p.size && p.forId === state.cur ? `${p.size[0]}×${p.size[1]} px · ${p.ms} ms` : '';
+
+  const b = state.batch, s = b.s || {}, cfg = BATCH[b.status];
+  const prog = `${s.done || 0}/${s.total || 0}`;
+  const text = {
+    idle: 'chưa chạy',
+    starting: 'đang khởi động…',
+    running: prog,
+    stopping: 'đang dừng… ' + prog,
+    stopped: 'đã dừng ' + prog,
+    done: 'xong ' + prog,
+    done_err: `xong ${prog}, ${s.error_count || 0} lỗi`,
+    failed: 'không bắt đầu được',
+  }[b.status];
+  $('#bDot').className = 'dot ' + cfg.dot;
+  $('#bState').textContent = 'Hàng loạt: ' + text;
+}
+
+function errLi(file, msg, time, i) {
+  const li = document.createElement('li');
+  li.style.setProperty('--i', i);
+  const f = document.createElement('b'); f.textContent = file || '(không rõ file)';
+  const m = document.createElement('span'); m.textContent = msg;
+  li.append(f);
+  if (time) { const t = document.createElement('time'); t.textContent = time; li.append(t); }
+  li.append(m);
+  return li;
+}
+
+const nearBottom = el => el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+
+function appendBatchErrs(list) {
+  const ol = $('#sErrs'), stick = nearBottom(ol);
+  let i = 0;
+  for (const e of list) {
+    state.batchErrs.push(e);
+    if (state.batchErrs.length <= MAX_BATCH_ERR_ROWS) ol.append(errLi(e.file, e.error, e.time, i++));
+  }
+  if (i && stick) ol.scrollTop = ol.scrollHeight;
+}
+
+function resetBatchErrs() {
+  state.batchErrs = [];
+  $('#sErrs').replaceChildren();
+}
+
+function parseErr(line) {
+  const k = line.indexOf(': ');
+  return k < 0 ? {file: '', error: line} : {file: line.slice(0, k), error: line.slice(k + 2)};
+}
+
+async function syncBatchErrorsOnce(s) {
+  const n = s.error_count || 0;
+  if (n < state.batchErrs.length) resetBatchErrs();
+  const missing = n - state.batchErrs.length;
+  if (missing <= 0) return;
+  if (missing <= (s.errors || []).length) {
+    appendBatchErrs(s.errors.slice(-missing).map(parseErr));
+    return;
+  }
+  // status only carries the last 30 errors; fall back to the full log when we fell behind.
+  try {
+    const L = await getJSON('/api/batch/log');
+    appendBatchErrs((L.errors || []).slice(state.batchErrs.length).map(e => ({file: e.file, error: e.error, time: e.time})));
+  } catch {}
+}
+
+let errSync = null, errPending = null;
+function syncBatchErrors(s) {
+  if (errSync) { errPending = s; return errSync; }
+  errSync = (async () => {
+    for (let cur = s; cur; cur = errPending) { errPending = null; await syncBatchErrorsOnce(cur); }
+  })().finally(() => { errSync = null; renderErrorsMeta(); });
+  return errSync;
+}
+
+function addPreviewError(file, message) {
+  const e = {time: stamp(), file, message};
+  state.previewErrors.push(e);
+  const ol = $('#pErrs'), stick = nearBottom(ol);
+  ol.append(errLi(file, message, e.time.slice(11), 0));
+  while (state.previewErrors.length > MAX_PREVIEW_ERRS) { state.previewErrors.shift(); ol.firstElementChild?.remove(); }
+  if (stick) ol.scrollTop = ol.scrollHeight;
+}
+
+function setPreviewError(file, msg) {
+  state.preview.error = msg;
+  addPreviewError(file, msg);
+  toast(msg, 'err');
+  render();
+}
+
+const STROKE_NAMES = {none: 'Không', solid: 'Liền', dash: 'Đứt', dots: 'Chấm tròn'};
 const FIELDS = [
   ['Nguồn', [
-    ['source', 'select', 'Loại đầu vào', () => META.sources, {photo: 'Ảnh chụp (tách người)', lineart: 'PNG nét cũ (restyle)'}],
-    ['model', 'select', 'Model tách nền', () => META.models, null, 'photo'],
+    ['source', 'select', 'Loại đầu vào', () => state.meta.sources, {photo: 'Ảnh chụp (tách người)', lineart: 'PNG nét cũ (restyle)'}],
+    ['model', 'select', 'Model tách nền', () => state.meta.models, null, 'photo'],
   ]],
   ['Nét chính', [
-    ['outline', 'select', 'Kiểu nét', () => META.strokes, {none: 'Không', solid: 'Liền', dash: 'Đứt', dots: 'Chấm tròn'}],
+    ['outline', 'select', 'Kiểu nét', () => state.meta.strokes, STROKE_NAMES],
     ['width', 'range', 'Độ dày', [0.5, 12, 0.25]],
     ['dash', 'range', 'Dài đoạn', [2, 60, 1]],
     ['gap', 'range', 'Khoảng hở', [2, 40, 1]],
@@ -142,7 +660,7 @@ const FIELDS = [
     ['edge_margin', 'range', 'Bỏ nét sát mép ảnh', [0, 20, 1]],
   ]],
   ['Nét phụ', [
-    ['inner', 'select', 'Kiểu nét', () => META.strokes, {none: 'Không', solid: 'Liền', dash: 'Đứt', dots: 'Chấm tròn'}],
+    ['inner', 'select', 'Kiểu nét', () => state.meta.strokes, STROKE_NAMES],
     ['inner_width', 'range', 'Độ dày', [0.5, 10, 0.25]],
     ['inner_opacity', 'range', 'Độ đậm', [0.05, 1, 0.05]],
     ['inner_dash', 'range', 'Dài đoạn', [2, 40, 1]],
@@ -162,175 +680,709 @@ const FIELDS = [
 ];
 
 function buildControls() {
-  const c = $('#controls');
-  let h = `<div class="group"><h3>Preset</h3><div class="row two"><label>Chọn</label><select id="preset"><option value="">—</option>`;
-  for (const k in META.presets) h += `<option value="p:${k}">${k}</option>`;
-  for (const k in META.saved) h += `<option value="s:${k}">★ ${k}</option>`;
-  h += `</select></div><div class="bar"><input id="saveName" type="text" placeholder="Tên style để lưu" style="flex:1"><button class="btn" id="saveBtn">Lưu</button></div><p class="muted">Kích thước tính theo ảnh cao 1000px, tự co giãn theo ảnh thật.</p></div>`;
+  const M = state.meta;
+  let h = `<div class="cgroup"><h3>Mẫu có sẵn</h3><div class="crow two"><label for="preset">Chọn</label><select id="preset" class="inp"><option value="">—</option>`;
+  for (const k in M.presets) h += `<option value="p:${esc(k)}">${esc(k)}</option>`;
+  for (const k in M.saved) h += `<option value="s:${esc(k)}">★ ${esc(k)}</option>`;
+  h += `</select></div><div class="tb" style="margin-top:8px"><input id="saveName" class="inp" type="text" placeholder="Tên style để lưu" style="flex:1"><button class="btn sm" id="saveBtn">${icon('save', 13)}Lưu</button></div><p class="muted">Kích thước tính theo ảnh cao 1000px, tự co giãn theo ảnh thật.</p></div>`;
   for (const [title, fs] of FIELDS) {
-    h += `<div class="group"><h3>${title}</h3>`;
+    h += `<div class="cgroup"><h3>${title}</h3>`;
     for (const [k, type, label, opt, names, only] of fs) {
       const cls = only ? `data-only="${only}"` : '';
       if (type === 'select') {
-        h += `<div class="row two" ${cls}><label>${label}</label><select data-k="${k}">` + opt().map(v => `<option value="${v}">${names ? names[v] || v : v}</option>`).join('') + `</select></div>`;
+        h += `<div class="crow two" ${cls}><label>${label}</label><select class="inp" data-k="${k}">` + opt().map(v => `<option value="${esc(v)}">${esc(names ? names[v] || v : v)}</option>`).join('') + `</select></div>`;
       } else if (type === 'range') {
-        h += `<div class="row" ${cls}><label>${label}</label><input type="range" data-k="${k}" min="${opt[0]}" max="${opt[1]}" step="${opt[2]}"><output data-o="${k}"></output></div>`;
+        h += `<div class="crow" ${cls}><label>${label}</label><input type="range" data-k="${k}" min="${opt[0]}" max="${opt[1]}" step="${opt[2]}"><output data-o="${k}"></output></div>`;
       } else if (type === 'check') {
         h += `<label class="check" ${cls}><input type="checkbox" data-k="${k}"> ${label}</label>`;
       } else if (type === 'color') {
-        h += `<div class="row two" ${cls}><label>${label}</label><input type="color" data-k="${k}"></div>`;
+        h += `<div class="crow two" ${cls}><label>${label}</label><input type="color" data-k="${k}"></div>`;
       }
     }
     h += `</div>`;
   }
+  const c = $('#controls');
   c.innerHTML = h;
   c.querySelectorAll('[data-k]').forEach(el => el.addEventListener('input', () => {
     const k = el.dataset.k;
-    style[k] = el.type === 'checkbox' ? el.checked : el.type === 'range' ? parseFloat(el.value) : el.value;
+    state.style[k] = el.type === 'checkbox' ? el.checked : el.type === 'range' ? parseFloat(el.value) : el.value;
     syncOutputs(); schedule();
   }));
   $('#preset').addEventListener('change', e => {
     const v = e.target.value; if (!v) return;
-    const src = v.startsWith('p:') ? META.presets[v.slice(2)] : META.saved[v.slice(2)];
-    style = Object.assign({}, META.defaults, src); applyStyle(); schedule(0);
+    const src = v.startsWith('p:') ? M.presets[v.slice(2)] : M.saved[v.slice(2)];
+    state.style = Object.assign({}, M.defaults, src); applyStyle(); schedule(0);
   });
   $('#saveBtn').onclick = async () => {
-    const name = $('#saveName').value.trim(); if (!name) return alert('Nhập tên style');
-    const r = await post('/api/style/save', {name, style});
-    if (r.error) return alert(r.error);
-    META.saved[r.name] = Object.assign({}, style);
-    const o = document.createElement('option'); o.value = 's:' + r.name; o.textContent = '★ ' + r.name; $('#preset').appendChild(o); $('#preset').value = o.value;
+    const name = $('#saveName').value.trim();
+    if (!name) return toast('Nhập tên style', 'warn');
+    const btn = $('#saveBtn');
+    btn.disabled = true;
+    try {
+      const r = await post('/api/style/save', {name, style: state.style});
+      const isNew = !(r.name in M.saved);
+      M.saved[r.name] = Object.assign({}, state.style);
+      if (isNew) $('#preset').append(new Option('★ ' + r.name, 's:' + r.name));
+      $('#preset').value = 's:' + r.name;
+      toast('Đã lưu style ' + r.name);
+    } catch (e) {
+      toast('Lưu style lỗi: ' + e.message, 'err');
+    } finally { btn.disabled = false; }
   };
 }
 
 function applyStyle() {
   document.querySelectorAll('#controls [data-k]').forEach(el => {
-    const v = style[el.dataset.k];
+    const v = state.style[el.dataset.k];
     if (el.type === 'checkbox') el.checked = !!v; else el.value = v;
   });
   syncOutputs();
 }
 
 function syncOutputs() {
-  document.querySelectorAll('#controls [data-o]').forEach(o => o.textContent = (+style[o.dataset.o]).toString().slice(0, 5));
-  document.querySelectorAll('#controls [data-only]').forEach(el => el.classList.toggle('hide', el.dataset.only !== style.source));
-  $('#refWrap').classList.toggle('hide', style.source !== 'lineart');
-  $('#bMode').textContent = style.source;
-}
-
-async function post(url, body) {
-  const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
-  return r.json();
+  document.querySelectorAll('#controls [data-o]').forEach(o => o.textContent = (+state.style[o.dataset.o]).toString().slice(0, 5));
+  document.querySelectorAll('#controls [data-only]').forEach(el => el.classList.toggle('hide', el.dataset.only !== state.style.source));
+  $('#refWrap').classList.toggle('hide', state.style.source !== 'lineart');
+  $('#bMode').textContent = {photo: 'Ảnh chụp', lineart: 'PNG nét'}[state.style.source] || state.style.source || '';
 }
 
 function addItems(list) {
-  for (const it of list) items.push(it);
-  renderThumbs();
-  if (!cur && items.length) select(items[0].id);
-}
-
-function renderThumbs() {
-  $('#thumbs').innerHTML = items.map(it => `<div class="t ${it.id === cur ? 'on' : ''}" data-id="${it.id}" title="${it.name}"><img src="${it.thumb}"><span>${it.name}</span>${it.hasAlpha ? '<b>PNG nét</b>' : ''}</div>`).join('');
-  $('#thumbs').querySelectorAll('.t').forEach(t => t.onclick = () => select(t.dataset.id));
-  const ref = $('#ref'), keep = ref.value;
-  ref.innerHTML = '<option value="">(không)</option>' + items.filter(i => !i.hasAlpha).map(i => `<option value="${i.id}">${i.name}</option>`).join('');
-  ref.value = keep;
+  const box = $('#thumbs');
+  list.forEach((it, i) => {
+    state.items.push(it);
+    const t = document.createElement('button');
+    t.type = 'button';
+    t.className = 't' + (it.hasAlpha ? ' ck' : '');
+    t.dataset.id = it.id;
+    t.title = it.name;
+    t.style.setProperty('--i', i);
+    const img = document.createElement('img'); img.src = it.thumb; img.alt = '';
+    const name = document.createElement('span'); name.textContent = it.name;
+    t.append(img, name);
+    if (it.hasAlpha) { const b = document.createElement('b'); b.textContent = 'PNG nét'; t.append(b); }
+    t.onclick = () => select(it.id);
+    box.append(t);
+    if (!it.hasAlpha) $('#ref').append(new Option(it.name, it.id));
+  });
+  if (!state.cur && state.items.length) select(state.items[0].id);
 }
 
 function select(id) {
-  cur = id; renderThumbs();
-  const it = items.find(i => i.id === id);
-  if (it.hasAlpha && style.source !== 'lineart') { style.source = 'lineart'; applyStyle(); }
-  if (!it.hasAlpha && style.source !== 'photo') { style.source = 'photo'; applyStyle(); }
-  $('#orig').src = it.thumb;
+  const it = itemById(id);
+  if (!it) return;
+  state.cur = id;
+  document.querySelectorAll('#thumbs .t').forEach(t => t.classList.toggle('on', t.dataset.id === id));
+  const src = it.hasAlpha ? 'lineart' : 'photo';
+  if (state.style.source !== src) { state.style.source = src; applyStyle(); }
+  setImg($('#orig'), it.thumb, true);
+  render();
   schedule(0);
 }
 
+let timer = null, seq = 0;
 function schedule(ms = 350) { clearTimeout(timer); timer = setTimeout(run, ms); }
 
 async function run() {
-  if (!cur) return;
-  const my = ++seq;
-  $('#busy').textContent = 'đang vẽ…';
-  const r = await post('/api/preview', {id: cur, style, bg, dim: +$('#dim').value, ref: $('#ref').value});
-  if (my !== seq) return;
-  $('#busy').textContent = '';
-  if (r.error) { $('#info').textContent = 'Lỗi: ' + r.error; return; }
-  $('#out').src = r.view; lastOverlay = r.overlay; $('#dlBtn').disabled = false;
-  $('#info').textContent = `${r.size[0]}×${r.size[1]} · ${r.ms} ms`;
+  if (!state.cur) return;
+  const my = ++seq, id = state.cur, p = state.preview;
+  p.rendering = true; render();
+  try {
+    const r = await post('/api/preview', {id, style: state.style, bg: state.bg, dim: +$('#dim').value, ref: $('#ref').value});
+    if (my !== seq) return;
+    // Only animate when the image itself changes; slider tweaks would otherwise flicker on every frame.
+    const changed = p.forId !== id;
+    Object.assign(p, {rendering: false, error: '', view: r.view, overlay: r.overlay, forId: id, size: r.size, ms: r.ms});
+    setImg($('#out'), r.view, changed);
+    render();
+  } catch (e) {
+    if (my !== seq) return;
+    p.rendering = false;
+    setPreviewError(itemById(id)?.name || '', e.message);
+  }
 }
 
 $('#dlBtn').onclick = () => {
-  const it = items.find(i => i.id === cur);
-  const a = document.createElement('a'); a.href = lastOverlay; a.download = it.name.replace(/\.[^.]+$/, '').replace(/_[to]$/, '') + '.png'; a.click();
+  const p = state.preview, it = itemById(p.forId);
+  if (!p.overlay || !it) return;
+  const a = document.createElement('a');
+  a.href = p.overlay;
+  a.download = it.name.replace(/\.[^.]+$/, '').replace(/_[to]$/, '') + '.png';
+  a.click();
 };
-$('#cmpBtn').onclick = () => { $('#view').classList.toggle('single'); $('#origFig').classList.toggle('hide'); };
+$('#cmpBtn').onclick = () => { state.compare = !state.compare; render(); };
 $('#bg').querySelectorAll('button').forEach(b => b.onclick = () => {
-  $('#bg').querySelectorAll('button').forEach(x => x.classList.remove('on')); b.classList.add('on'); bg = b.dataset.v; schedule(0);
+  state.bg = b.dataset.v; segSet($('#bg'), state.bg, 'v', 'aria-checked'); schedule(0);
 });
 $('#dim').oninput = () => schedule(200);
 $('#ref').onchange = () => schedule(0);
+$('#addPath').addEventListener('input', renderPreview);
+$('#addPath').addEventListener('keydown', e => { if (e.key === 'Enter' && !$('#addBtn').disabled) $('#addBtn').click(); });
 
-async function uploadFiles(files) {
-  const fd = new FormData(); for (const f of files) fd.append('files', f);
-  $('#busy').textContent = 'đang tải ảnh…';
-  const r = await (await fetch('/api/upload', {method: 'POST', body: fd})).json();
-  $('#busy').textContent = '';
-  addItems(r.items);
+async function withUpload(kind, label, call) {
+  state.preview.uploading = kind; render();
+  try {
+    const r = await call();
+    if (!Array.isArray(r.items)) throw new Error('Phản hồi không hợp lệ');
+    const hadErr = !!state.preview.error;
+    state.preview.uploading = false;
+    state.preview.error = '';
+    if (!r.items.length) { toast('Không tìm thấy ảnh nào', 'warn'); render(); return; }
+    addItems(r.items);
+    toast(`Đã thêm ${r.items.length} ảnh`);
+    // The shown result may predate the cleared error; re-render so "ready" is truthful.
+    if (hadErr && state.cur) schedule(0);
+    render();
+  } catch (e) {
+    state.preview.uploading = false;
+    setPreviewError(label, 'Tải ảnh lỗi: ' + e.message);
+  }
 }
-$('#file').onchange = e => uploadFiles(e.target.files);
-const drop = $('#drop');
-['dragenter', 'dragover'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
-['dragleave', 'drop'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
-document.addEventListener('drop', e => { if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files); });
-$('#addBtn').onclick = async () => {
-  const path = $('#addPath').value.trim(); if (!path) return;
-  $('#addBtn').disabled = true; $('#addBtn').textContent = 'Đang tải…';
-  const r = await post('/api/add_path', {path, field: $('#addField').value});
-  $('#addBtn').disabled = false; $('#addBtn').textContent = 'Thêm';
-  if (r.error) return alert(r.error);
-  addItems(r.items);
+
+function uploadFiles(fileList) {
+  const files = [...fileList].filter(f => !f.type || f.type.startsWith('image/'));
+  if (!files.length) return toast('Không có file ảnh nào', 'warn');
+  if (state.preview.uploading) return toast('Đang tải ảnh, chờ chút', 'info');
+  const fd = new FormData();
+  for (const f of files) fd.append('files', f);
+  const label = files.length === 1 ? files[0].name : `${files.length} file`;
+  return withUpload('file', label, () => api('/api/upload', {method: 'POST', body: fd}));
+}
+$('#fileBtn').onclick = () => $('#file').click();
+document.addEventListener('click', e => { if (e.target.closest('[data-pick-file]') && !$('#file').disabled) $('#file').click(); });
+$('#file').onchange = e => { const fs = e.target.files; if (fs.length) uploadFiles(fs); e.target.value = ''; };
+$('#addBtn').onclick = () => {
+  const path = $('#addPath').value.trim();
+  if (!path || state.preview.uploading) return;
+  withUpload('path', path, () => post('/api/add_path', {path, field: $('#addField').value}));
 };
 
-document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
-  document.querySelectorAll('.tabs button').forEach(x => x.classList.remove('on')); b.classList.add('on');
-  $('#tab-try').classList.toggle('hide', b.dataset.tab !== 'try');
-  $('#tab-batch').classList.toggle('hide', b.dataset.tab !== 'batch');
+const drop = $('#drop');
+const hasFiles = e => [...(e.dataTransfer?.types || [])].includes('Files');
+let dragDepth = 0;
+document.addEventListener('dragenter', e => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth++; drop.classList.add('over'); });
+document.addEventListener('dragover', e => { if (hasFiles(e)) e.preventDefault(); });
+document.addEventListener('dragleave', e => { if (hasFiles(e) && --dragDepth <= 0) { dragDepth = 0; drop.classList.remove('over'); } });
+document.addEventListener('drop', e => {
+  if (!hasFiles(e)) return;
+  e.preventDefault(); dragDepth = 0; drop.classList.remove('over');
+  if (!e.dataTransfer.files.length) return;
+  setTab('try');
+  uploadFiles(e.dataTransfer.files);
 });
 
+const tabs = $('.tabs');
+function setTab(t) {
+  if (t === state.tab) return;
+  state.tab = t;
+  segSet(tabs, t, 'tab', 'aria-selected');
+  for (const [tab, id] of [['try', '#tab-try'], ['batch', '#tab-batch']]) {
+    const el = $(id), show = t === tab;
+    el.classList.toggle('hide', !show);
+    if (show) {
+      el.classList.remove('m-view-enter', 'back'); void el.offsetWidth;
+      el.classList.add('m-view-enter');
+      el.classList.toggle('back', t === 'try');
+    }
+  }
+}
+tabs.querySelectorAll('button').forEach(b => b.onclick = () => setTab(b.dataset.tab));
+
 const LS = 'poseLineBatch';
-const saved = JSON.parse(localStorage.getItem(LS) || '{}');
-for (const k of ['bIn', 'bOut', 'bSuf', 'bFlt']) if (saved[k]) $('#' + k).value = saved[k];
-let poll = null;
+try {
+  const saved = JSON.parse(localStorage.getItem(LS) || '{}');
+  for (const k of ['bIn', 'bOut', 'bSuf', 'bFlt']) if (saved[k]) $('#' + k).value = saved[k];
+} catch {}
+
+const formCfg = () => ({
+  input: $('#bIn').value.trim(), output: $('#bOut').value.trim(), strip_suffix: $('#bSuf').value, filter: $('#bFlt').value,
+  limit: +$('#bLim').value || 0, max_height: +$('#bMaxH').value || 0, skip_existing: $('#bSkip').checked,
+});
+
 $('#bStart').onclick = async () => {
-  const cfg = {input: $('#bIn').value, output: $('#bOut').value, strip_suffix: $('#bSuf').value, filter: $('#bFlt').value, limit: +$('#bLim').value, max_height: +$('#bMaxH').value, skip_existing: $('#bSkip').checked, style};
-  localStorage.setItem(LS, JSON.stringify({bIn: cfg.input, bOut: cfg.output, bSuf: cfg.strip_suffix, bFlt: cfg.filter}));
-  const r = await post('/api/batch/start', cfg);
-  if (r.error) return alert(r.error);
-  clearInterval(poll); poll = setInterval(status, 1000); status();
+  const b = state.batch;
+  if (ACTIVE.has(b.status)) return;
+  const cfg = formCfg();
+  if (!cfg.input || !cfg.output) return toast('Nhập đầu vào và thư mục ra', 'warn');
+  try { localStorage.setItem(LS, JSON.stringify({bIn: cfg.input, bOut: cfg.output, bSuf: cfg.strip_suffix, bFlt: cfg.filter})); } catch {}
+  b.status = 'starting'; b.msg = ''; render();
+  try {
+    await post('/api/batch/start', {...cfg, style: state.style});
+  } catch (e) {
+    b.status = 'failed'; b.msg = e.message;
+    toast('Không bắt đầu được: ' + e.message, 'err');
+    render();
+    pollStatus();
+    return;
+  }
+  resetBatchErrs();
+  resetResults();
+  b.s = null;
+  render();
+  pollStatus();
 };
-$('#bStop').onclick = () => post('/api/batch/stop', {});
-$('#bOpen').onclick = () => post('/api/open', {path: $('#bOut').value});
-async function status() {
-  const s = await (await fetch('/api/batch/status')).json();
-  $('#bBar').style.width = (s.total ? s.done / s.total * 100 : 0) + '%';
-  $('#sDone').textContent = `${s.done}/${s.total}`; $('#sOk').textContent = s.ok; $('#sSkip').textContent = s.skip; $('#sErr').textContent = s.error_count;
-  $('#sTime').textContent = s.elapsed + 's';
-  const per = s.ok ? s.elapsed / Math.max(1, s.done) : 0;
-  $('#sEta').textContent = s.running && per ? Math.round(per * (s.total - s.done)) + 's' : '–';
-  $('#sCur').textContent = s.running ? 'Đang xử lý: ' + s.current : (s.total ? 'Xong · ' + s.out : '');
-  if (s.last) $('#sLast').src = s.last;
-  $('#sErrs').textContent = s.errors.join('\n');
-  if (!s.running) clearInterval(poll);
+$('#bStop').onclick = async () => {
+  const b = state.batch;
+  if (b.status !== 'running') return;
+  b.status = 'stopping'; render();
+  try { await post('/api/batch/stop', {}); }
+  catch (e) {
+    if (b.status === 'stopping') b.status = 'running';
+    toast('Không dừng được: ' + e.message, 'err');
+    render();
+  }
+};
+$('#bOpen').onclick = async () => {
+  const path = $('#bOut').value.trim();
+  if (!path) return toast('Chưa nhập thư mục ra', 'warn');
+  try { await post('/api/open', {path}); } catch (e) { toast('Không mở được thư mục: ' + e.message, 'err'); }
+};
+
+function deriveBatch(s, prev, keepFailed) {
+  if (s.running) return prev === 'stopping' ? 'stopping' : 'running';
+  if (keepFailed) return 'failed';
+  if (!s.started) return 'idle';
+  if (s.stopped) return 'stopped';
+  return s.error_count ? 'done_err' : 'done';
 }
 
+function finishToast(s, status) {
+  const view = s.ok + s.skip ? {label: 'Xem kết quả', run: showLatestResult} : null;
+  if (status === 'stopped') toast(`Đã dừng ở ${s.done}/${s.total}`, 'info', view);
+  else if (status === 'done_err') toast(`Xong, ${s.error_count} lỗi`, 'warn', view);
+  else if (!s.total) toast('Không có ảnh nào khớp đầu vào', 'warn');
+  else toast(`Xong ${s.ok} ảnh` + (s.skip ? `, bỏ qua ${s.skip}` : ''), 'ok', view);
+}
+
+const MAX_POLL_FAILS = 5;
+let pollT = null, pollTok = 0, pollFails = 0;
+async function pollStatus() {
+  clearTimeout(pollT);
+  const tok = ++pollTok, b = state.batch;
+  let s;
+  try {
+    s = await getJSON('/api/batch/status');
+    pollFails = 0;
+  } catch (e) {
+    if (tok !== pollTok) return;
+    pollFails++;
+    if (pollFails === 1) toast('Mất kết nối khi cập nhật hàng loạt: ' + e.message, 'warn');
+    if (ACTIVE.has(b.status) && pollFails >= MAX_POLL_FAILS) {
+      b.status = 'failed'; b.msg = 'Mất kết nối máy chủ: ' + e.message; b.lost = true;
+      toast(b.msg, 'err');
+      render();
+    }
+    if (ACTIVE.has(b.status)) pollT = setTimeout(pollStatus, 2000);
+    else if (b.lost) pollT = setTimeout(pollStatus, 5000);
+    return;
+  }
+  if (tok !== pollTok) return;
+  const prev = b.status, wasLive = ACTIVE.has(prev) || b.lost;
+  b.s = s;
+  if (wasLive && !s.running && !s.started) {
+    b.status = 'failed'; b.msg = 'Máy chủ đã khởi động lại, lượt chạy bị mất';
+    toast(b.msg, 'warn');
+  } else {
+    b.status = deriveBatch(s, prev, prev === 'failed' && !b.lost);
+  }
+  b.lost = false;
+  const ending = wasLive && !ACTIVE.has(b.status) && b.status !== 'failed';
+  render();
+  const syncs = Promise.all([syncBatchErrors(s), syncResults()]);
+  if (ACTIVE.has(b.status)) { pollT = setTimeout(pollStatus, 1000); return; }
+  await syncs;
+  if (ending && tok === pollTok) finishToast(s, b.status);
+}
+
+const MAX_RESULT_ROWS = 300;
+const RES_DOT = {ok: '', skip: 'idle', err: 'err'};
+const viewable = r => r.status === 'ok' || r.status === 'skip';
+const matchFilter = r => state.resFilter === 'all' || r.status === state.resFilter;
+const fileUrl = r => `/api/batch/file?f=${encodeURIComponent(r.file)}&v=${state.batch.s?.started || 0}`;
+
+function resultRow(r, i) {
+  const li = document.createElement('li');
+  li.className = 'rrow';
+  li.style.setProperty('--i', i);
+  const dot = document.createElement('span'); dot.className = 'dot ' + RES_DOT[r.status];
+  const name = document.createElement('span'); name.className = 'rname'; name.textContent = r.file; name.title = r.file;
+  const ms = document.createElement('span'); ms.className = 'rms'; ms.textContent = r.status === 'skip' ? 'bỏ qua' : r.ms + ' ms';
+  li.append(dot, name, ms);
+  if (viewable(r)) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'icon-btn'; b.title = 'Xem'; b.setAttribute('aria-label', 'Xem ' + r.file);
+    b.innerHTML = icon('eye', 14);
+    b.onclick = () => openViewer(r.i);
+    li.append(b);
+  } else li.append(document.createElement('span'));
+  if (r.error) { const e = document.createElement('span'); e.className = 'rerr'; e.textContent = r.error; li.append(e); }
+  return li;
+}
+
+function trimRows(ol) {
+  while (ol.children.length > MAX_RESULT_ROWS) ol.lastElementChild.remove();
+}
+
+function appendResults(items) {
+  const ol = $('#rList');
+  const fresh = [];
+  for (const r of items) {
+    if (r.i !== state.results.length) continue;
+    state.results.push(r);
+    state.resCount[r.status] = (state.resCount[r.status] || 0) + 1;
+    if (matchFilter(r)) fresh.push(r);
+  }
+  fresh.forEach((r, k) => ol.prepend(resultRow(r, fresh.length - 1 - k)));
+  trimRows(ol);
+}
+
+function rebuildResults() {
+  const ol = $('#rList');
+  const rows = [];
+  for (let k = state.results.length - 1; k >= 0 && rows.length < MAX_RESULT_ROWS; k--) {
+    const r = state.results[k];
+    if (matchFilter(r)) rows.push(resultRow(r, rows.length));
+  }
+  ol.replaceChildren(...rows);
+}
+
+function resetResults() {
+  state.results = [];
+  state.resCount = {ok: 0, skip: 0, err: 0};
+  $('#rList').replaceChildren();
+}
+
+function renderResultsMeta() {
+  const c = state.resCount;
+  const counts = {all: state.results.length, ok: c.ok, skip: c.skip, err: c.err};
+  document.querySelectorAll('#rFilter .rc').forEach(el => el.textContent = counts[el.dataset.c]);
+  const shown = $('#rList').children.length;
+  const matching = counts[state.resFilter];
+  $('#rEmpty').classList.toggle('hide', shown > 0 || !$('#rCur').classList.contains('hide'));
+  $('#rEmpty').textContent = state.results.length ? 'Không có file nào khớp bộ lọc.' : 'Chưa có file nào được xử lý.';
+  $('#rMore').textContent = matching > shown ? `Đang hiện ${shown}/${matching} file mới nhất.` : '';
+}
+
+const RESULTS_PAGE = 1000;
+let resSync = null, resPending = false, resStarted = null;
+function syncResults() {
+  if (resSync) { resPending = true; return resSync; }
+  resSync = (async () => {
+    do {
+      resPending = false;
+      let r;
+      try { r = await getJSON('/api/batch/results?since=' + state.results.length); } catch { break; }
+      if (r.started !== resStarted) {
+        resStarted = r.started;
+        if (state.results.length) { resetResults(); closeViewer(); resPending = true; continue; }
+      }
+      state.resOut = r.out || '';
+      const items = r.items || [];
+      appendResults(items);
+      if (items.length >= RESULTS_PAGE) resPending = true;
+    } while (resPending);
+  })().finally(() => { resSync = null; renderResultsMeta(); });
+  return resSync;
+}
+
+$('#rFilter').querySelectorAll('button').forEach(b => b.onclick = () => {
+  state.resFilter = b.dataset.f;
+  segSet($('#rFilter'), state.resFilter, 'f', 'aria-checked');
+  rebuildResults();
+  renderResultsMeta();
+});
+
+let viewer = null, viewerBg = 'dark';
+function openViewer(idx) {
+  if (!viewer) {
+    const root = document.createElement('div');
+    root.className = 'modal-root';
+    root.innerHTML = `<div class="scrim m-fade-in"></div>
+      <div class="sheet dlg viewer m-sheet-in" role="dialog" aria-modal="true" aria-label="Xem ảnh kết quả" tabindex="-1">
+        <div class="v-head"><h2></h2><span class="chip"></span>
+          <span class="seg" role="radiogroup" aria-label="Nền">
+            <button data-b="ck" role="radio"><span class="seg-label">Caro</span></button>
+            <button data-b="dark" role="radio"><span class="seg-label">Tối</span></button>
+            <button data-b="light" role="radio"><span class="seg-label">Sáng</span></button>
+          </span>
+          <button class="icon-btn" data-act="close" title="Đóng (Esc)" aria-label="Đóng">${icon('x', 16)}</button></div>
+        <div class="v-box"><img alt=""><div class="note err hide">${icon('alert', 15)}<span>Không tải được ảnh (file không còn trong thư mục ra?)</span></div></div>
+        <div class="v-foot">
+          <button class="btn sm" data-act="prev" title="Ảnh trước (←)">${icon('left', 13)}Trước</button>
+          <button class="btn sm" data-act="next" title="Ảnh sau (→)">Sau${icon('right', 13)}</button>
+          <span></span><span class="grow"></span>
+          <button class="btn sm ghost" data-act="open">${icon('folder', 13)}Mở thư mục ra</button>
+        </div>
+      </div>`;
+    const sheet = root.querySelector('.sheet'), img = root.querySelector('img');
+    viewer = {root, sheet, img, idx: -1, opener: document.activeElement};
+    $('.app').inert = true;
+    root.querySelector('.scrim').onclick = closeViewer;
+    root.querySelector('[data-act=close]').onclick = closeViewer;
+    root.querySelector('[data-act=prev]').onclick = () => stepViewer(-1);
+    root.querySelector('[data-act=next]').onclick = () => stepViewer(1);
+    root.querySelector('[data-act=open]').onclick = async () => {
+      const path = state.resOut || $('#bOut').value.trim();
+      try { await post('/api/open', {path}); } catch (e) { toast('Không mở được thư mục: ' + e.message, 'err'); }
+    };
+    const seg = root.querySelector('.seg');
+    seg.querySelectorAll('button').forEach(b => b.onclick = () => { viewerBg = b.dataset.b; showViewer(viewer.idx); });
+    img.onload = () => root.querySelector('.v-box .note').classList.add('hide');
+    img.onerror = () => root.querySelector('.v-box .note').classList.remove('hide');
+    document.body.append(root);
+    document.addEventListener('keydown', viewerKeys);
+    sheet.focus();
+  }
+  showViewer(idx);
+}
+
+function showViewer(idx) {
+  const r = state.results[idx];
+  if (!viewer || !r) return;
+  const {root, img} = viewer;
+  const changed = viewer.idx !== idx;
+  viewer.idx = idx;
+  root.querySelector('h2').textContent = r.file;
+  root.querySelector('h2').title = r.file;
+  const chip = root.querySelector('.v-head .chip');
+  chip.className = 'chip ' + (r.status === 'ok' ? 'c-green' : 'c-gray');
+  chip.textContent = r.status === 'ok' ? `Đã tạo · ${r.ms} ms` : 'Có sẵn (bỏ qua)';
+  segSet(root.querySelector('.seg'), viewerBg, 'b', 'aria-checked');
+  root.querySelector('.v-box').className = 'v-box ' + viewerBg;
+  if (changed) { root.querySelector('.v-box .note').classList.add('hide'); setImg(img, fileUrl(r), true); img.alt = r.file; }
+  const list = state.results.filter(viewable);
+  const pos = list.findIndex(x => x.i === idx);
+  root.querySelector('.v-foot > span').textContent = `${pos + 1} / ${list.length}`;
+  root.querySelector('[data-act=prev]').disabled = pos <= 0;
+  root.querySelector('[data-act=next]').disabled = pos >= list.length - 1;
+}
+
+function stepViewer(d) {
+  if (!viewer) return;
+  const list = state.results.filter(viewable);
+  const pos = list.findIndex(x => x.i === viewer.idx);
+  const next = list[pos + d];
+  if (next) showViewer(next.i);
+}
+
+function viewerKeys(e) {
+  if (!viewer) return;
+  if (e.key === 'Escape') { e.preventDefault(); closeViewer(); }
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); stepViewer(-1); }
+  else if (e.key === 'ArrowRight') { e.preventDefault(); stepViewer(1); }
+  else if (e.key === 'Tab') {
+    const f = [...viewer.sheet.querySelectorAll('button:not(:disabled)')];
+    if (!f.length) return;
+    const first = f[0], last = f[f.length - 1], at = document.activeElement;
+    if (e.shiftKey && (at === first || at === viewer.sheet)) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && at === last) { e.preventDefault(); first.focus(); }
+  }
+}
+
+function closeViewer() {
+  if (!viewer) return;
+  const {root, sheet, opener} = viewer;
+  viewer = null;
+  document.removeEventListener('keydown', viewerKeys);
+  $('.app').inert = false;
+  root.classList.add('closing');
+  sheet.classList.replace('m-sheet-in', 'm-sheet-out');
+  let gone = false;
+  const remove = () => {
+    if (gone) return;
+    gone = true;
+    root.remove();
+    if (viewer) return;
+    const target = opener && document.contains(opener) && opener !== document.body ? opener : $('#rList');
+    target.focus();
+  };
+  sheet.addEventListener('animationend', remove, {once: true});
+  setTimeout(remove, 400);
+}
+
+function showLatestResult() {
+  setTab('batch');
+  const last = [...state.results].reverse().find(viewable);
+  if (last) openViewer(last.i);
+  else $('#rList').scrollIntoView({behavior: 'smooth', block: 'nearest'});
+}
+
+const TXT_KEYS = ['input', 'output', 'strip_suffix', 'filter', 'limit', 'max_height', 'skip_existing', 'jobs'];
+
+async function collectLog() {
+  let srv = null, srvErr = '';
+  try { srv = await getJSON('/api/batch/log'); } catch (e) { srvErr = e.message; }
+  const hasCfg = srv?.config && Object.keys(srv.config).length;
+  const {style: batchStyle = null, ...config} = hasCfg ? srv.config : formCfg();
+  const ss = srv?.state || state.batch.s || {};
+  const ts = t => t ? stamp(new Date(t * 1000)) : '';
+  return {
+    app: 'Pose Line Tool',
+    time: stamp(),
+    serverTime: srv?.time || '',
+    device: srv?.device || state.meta?.device || '',
+    url: location.href,
+    userAgent: navigator.userAgent,
+    style: state.style,
+    batch: {
+      status: state.batch.status, label: BATCH[state.batch.status].label, message: state.batch.msg,
+      done: ss.done || 0, total: ss.total || 0, ok: ss.ok || 0, skip: ss.skip || 0,
+      errors: srv ? (srv.errors || []).length : (state.batch.s?.error_count || 0),
+      out: ss.out || '', started: ts(ss.started), finished: ts(ss.finished),
+    },
+    batchConfigSource: hasCfg ? 'server' : 'form',
+    batchConfig: config,
+    batchStyle,
+    batchErrors: srv ? (srv.errors || []) : state.batchErrs,
+    previewErrors: state.previewErrors,
+    logError: srvErr,
+  };
+}
+
+function logText(L) {
+  const out = [
+    `${L.app} — log lỗi`,
+    `Thời gian: ${L.time}` + (L.serverTime ? ` (máy chủ: ${L.serverTime})` : ''),
+    `Thiết bị: ${L.device || 'không rõ'}`,
+    `URL: ${L.url}`,
+    `Trình duyệt: ${L.userAgent}`,
+  ];
+  if (L.logError) out.push(`Không lấy được log máy chủ: ${L.logError}`);
+  const b = L.batch;
+  out.push('', '== Trạng thái hàng loạt ==',
+    `Trạng thái: ${b.label} (${b.status})` + (b.message ? ` — ${b.message}` : ''),
+    `Tiến độ: ${b.done}/${b.total} · đã tạo ${b.ok} · bỏ qua ${b.skip} · lỗi ${b.errors}`);
+  if (b.out) out.push(`Thư mục ra: ${b.out}`);
+  if (b.started) out.push(`Bắt đầu: ${b.started}` + (b.finished ? ` · kết thúc: ${b.finished}` : ''));
+  out.push('', `== Cấu hình hàng loạt (${L.batchConfigSource === 'server' ? 'lần chạy gần nhất' : 'form, chưa chạy'}) ==`);
+  for (const k of TXT_KEYS) if (k in L.batchConfig) out.push(`${k}: ${L.batchConfig[k]}`);
+  out.push('', '== Style hiện tại ==', JSON.stringify(L.style, null, 2));
+  if (L.batchStyle) out.push('', '== Style của lần chạy hàng loạt ==', JSON.stringify(L.batchStyle, null, 2));
+  out.push('', `== Lỗi hàng loạt (${L.batchErrors.length}) ==`);
+  if (!L.batchErrors.length) out.push('(không có)');
+  for (const e of L.batchErrors) {
+    out.push(`[${e.time || ''}] ${e.file} — ${e.error}`);
+    if (e.src && e.src !== e.file) out.push(`    nguồn: ${e.src}`);
+  }
+  out.push('', `== Lỗi xem trước gần đây (${L.previewErrors.length}) ==`);
+  if (!L.previewErrors.length) out.push('(không có)');
+  for (const e of L.previewErrors) out.push(`[${e.time}] ${e.file || '(không rõ file)'} — ${e.message}`);
+  return out.join('\n') + '\n';
+}
+
+function saveFile(text, name, type) {
+  const url = URL.createObjectURL(new Blob([text], {type}));
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function exportLog(fmt) {
+  const L = await collectLog();
+  const name = `pose-line-log-${fileStamp()}`;
+  if (fmt === 'json') saveFile(JSON.stringify(L, null, 2), name + '.json', 'application/json');
+  else saveFile(logText(L), name + '.txt', 'text/plain;charset=utf-8');
+  toast(`Đã xuất ${name}.${fmt}`);
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch {}
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;top:-1000px;opacity:0';
+  document.body.append(ta); ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch {}
+  ta.remove();
+  return ok;
+}
+
+async function copyLog() {
+  const ok = await copyText(logText(await collectLog()));
+  toast(ok ? 'Đã sao chép log lỗi' : 'Trình duyệt chặn sao chép, hãy dùng Xuất log lỗi', ok ? 'ok' : 'err');
+}
+
+$('#eCopy').onclick = copyLog;
+$('#eTxt').onclick = () => exportLog('txt');
+$('#eJson').onclick = () => exportLog('json');
+
+let menuEl = null;
+function closeMenu() { menuEl?.remove(); menuEl = null; }
+function openMenu(anchor, entries) {
+  closeMenu();
+  const m = document.createElement('div');
+  m.className = 'menu m-menu-in';
+  m.setAttribute('role', 'menu');
+  for (const e of entries) {
+    if (e === '-') { m.append(document.createElement('hr')); continue; }
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.setAttribute('role', 'menuitem');
+    b.innerHTML = icon(e.icon, 14) + '<span></span>';
+    b.querySelector('span').textContent = e.label;
+    b.onclick = () => { closeMenu(); e.run(); };
+    m.append(b);
+  }
+  document.body.append(m);
+  const r = anchor.getBoundingClientRect();
+  m.style.left = Math.max(8, Math.min(r.left, innerWidth - m.offsetWidth - 8)) + 'px';
+  m.style.bottom = (innerHeight - r.top + 6) + 'px';
+  menuEl = m;
+  m.querySelector('button')?.focus();
+}
+document.addEventListener('pointerdown', e => { if (menuEl && !menuEl.contains(e.target) && !$('#errBtn').contains(e.target)) closeMenu(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && menuEl) { closeMenu(); $('#errBtn').focus(); } });
+$('#errBtn').onclick = e => {
+  if (menuEl) return closeMenu();
+  openMenu(e.currentTarget, [
+    {icon: 'copy', label: 'Sao chép log lỗi', run: copyLog},
+    {icon: 'download', label: 'Xuất log lỗi (.txt)', run: () => exportLog('txt')},
+    {icon: 'file', label: 'Xuất JSON', run: () => exportLog('json')},
+    '-',
+    {icon: 'alert', label: 'Xem danh sách lỗi', run: () => { setTab('batch'); $('#errPanel').scrollIntoView({behavior: 'smooth', block: 'nearest'}); }},
+  ]);
+};
+
+const fsBtn = $('#fsBtn');
+function syncFullscreen() {
+  const on = !!document.fullscreenElement;
+  const label = on ? 'Thoát toàn màn hình' : 'Toàn màn hình';
+  fsBtn.innerHTML = icon(on ? 'minimize' : 'maximize', 16);
+  fsBtn.title = label;
+  fsBtn.setAttribute('aria-label', label);
+  fsBtn.classList.toggle('on', on);
+}
+fsBtn.classList.toggle('hide', !document.fullscreenEnabled);
+fsBtn.onclick = async () => {
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else await document.documentElement.requestFullscreen();
+  } catch (e) { toast('Không chuyển được chế độ toàn màn hình', 'warn'); }
+};
+document.addEventListener('fullscreenchange', syncFullscreen);
+
+hydrateIcons();
+render();
+
 (async () => {
-  META = await (await fetch('/api/meta')).json();
-  $('#dev').textContent = 'Thiết bị: ' + META.device;
-  style = Object.assign({}, META.defaults, Object.values(META.presets)[1]);
+  try {
+    state.meta = await getJSON('/api/meta');
+  } catch (e) {
+    $('#devDot').className = 'dot err';
+    $('#dev').textContent = 'Thiết bị: không rõ';
+    setPreviewError('(khởi động)', 'Không tải được cấu hình: ' + e.message);
+    return;
+  }
+  const M = state.meta;
+  $('#devDot').className = 'dot';
+  $('#dev').textContent = 'Thiết bị: ' + M.device;
+  const presetKeys = Object.keys(M.presets);
+  const initial = presetKeys[1] ?? presetKeys[0];
+  state.style = Object.assign({}, M.defaults, initial ? M.presets[initial] : {});
   buildControls(); applyStyle();
-  $('#preset').value = 'p:' + Object.keys(META.presets)[1];
-  status();
+  if (initial) $('#preset').value = 'p:' + initial;
+  render();
+  pollStatus();
 })();
 </script>
 </body>

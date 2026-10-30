@@ -3,6 +3,7 @@ import glob
 import io
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -212,13 +213,23 @@ class Batch:
     def __init__(self):
         self.state = {"running": False, "stopped": False, "done": 0, "total": 0, "ok": 0, "skip": 0, "errors": [], "current": "", "last": None, "out": "", "started": 0, "finished": 0}
         self.error_items = []
+        self.results = []
         self.cfg = {}
         self.stop = threading.Event()
         self.thread = None
+        self.start_lock = threading.Lock()
 
     def start(self, cfg):
-        if self.state["running"]:
-            return "Đang chạy batch khác"
+        with self.start_lock:
+            if self.state["running"]:
+                return "Đang có một lượt chạy hàng loạt khác"
+            try:
+                return self._start(cfg)
+            except Exception as e:
+                traceback.print_exc()
+                return f"Không bắt đầu được: {e}"
+
+    def _start(self, cfg):
         src = cfg.get("input", "").strip().strip('"')
         out = cfg.get("output", "").strip().strip('"')
         if not src or not out:
@@ -249,6 +260,7 @@ class Batch:
             json.dump(st.to_dict(), f, ensure_ascii=False, indent=2)
         self.stop.clear()
         self.error_items = []
+        self.results = []
         self.cfg = {k: v for k, v in cfg.items() if k != "style"} | {"style": st.to_dict(), "jobs": len(jobs)}
         self.state = {"running": True, "stopped": False, "done": 0, "total": len(jobs), "ok": 0, "skip": 0, "errors": [], "current": "", "last": None, "out": out, "started": time.time(), "finished": 0}
         self.thread = threading.Thread(target=self._run, args=(jobs, out, st, cfg), daemon=True)
@@ -256,6 +268,14 @@ class Batch:
         return None
 
     def _run(self, jobs, out, st, cfg):
+        try:
+            self._loop(jobs, out, st, cfg)
+        finally:
+            self.state["stopped"] = self.stop.is_set() and self.state["done"] < self.state["total"]
+            self.state["running"] = False
+            self.state["finished"] = time.time()
+
+    def _loop(self, jobs, out, st, cfg):
         skip = bool(cfg.get("skip_existing", True))
         max_h = int(cfg.get("max_height") or 0)
         for src, rel in jobs:
@@ -263,9 +283,12 @@ class Batch:
                 break
             dst = os.path.join(out, rel)
             self.state["current"] = rel
+            t0 = time.time()
+            status, err = "ok", ""
             try:
                 if skip and os.path.exists(dst):
                     self.state["skip"] += 1
+                    status = "skip"
                 else:
                     im = _load(src)
                     if max_h and im.height > max_h:
@@ -278,12 +301,11 @@ class Batch:
                     if self.state["ok"] % 3 == 1:
                         self.state["last"] = _b64(pc.checker(ov.size, ov), "JPEG", 420)
             except Exception as e:
+                status, err = "err", str(e)
                 self.state["errors"].append(f"{rel}: {e}")
-                self.error_items.append({"file": rel, "src": src, "error": str(e), "time": time.strftime("%Y-%m-%d %H:%M:%S")})
+                self.error_items.append({"file": rel, "src": src, "error": err, "time": time.strftime("%Y-%m-%d %H:%M:%S")})
+            self.results.append({"i": len(self.results), "file": rel.replace(os.sep, "/"), "status": status, "error": err, "ms": int((time.time() - t0) * 1000)})
             self.state["done"] += 1
-        self.state["stopped"] = self.stop.is_set()
-        self.state["running"] = False
-        self.state["finished"] = time.time()
 
 
 batch = Batch()
@@ -313,6 +335,30 @@ def batch_log():
     return jsonify(state=s, config=batch.cfg, errors=batch.error_items, device=pc.device_info(), time=time.strftime("%Y-%m-%d %H:%M:%S"))
 
 
+@app.get("/api/batch/results")
+def batch_results():
+    since = max(0, request.args.get("since", 0, type=int))
+    return jsonify(items=batch.results[since:since + 1000], total=len(batch.results), out=batch.state["out"], started=batch.state["started"])
+
+
+@app.get("/api/batch/file")
+def batch_file():
+    out = batch.state["out"]
+    rel = request.args.get("f", "")
+    if not out or not rel:
+        return jsonify(error="Không tìm thấy file"), 404
+    root = os.path.realpath(out)
+    path = os.path.realpath(os.path.join(root, rel))
+    # Only serve files inside the current batch output folder (commonpath raises across drives).
+    try:
+        inside = os.path.commonpath([path, root]) == root
+    except ValueError:
+        inside = False
+    if not inside or not os.path.isfile(path):
+        return jsonify(error="Không tìm thấy file"), 404
+    return send_from_directory(os.path.dirname(path), os.path.basename(path), max_age=0)
+
+
 @app.post("/api/batch/stop")
 def batch_stop():
     batch.stop.set()
@@ -321,14 +367,13 @@ def batch_stop():
 
 @app.post("/api/open")
 def open_folder():
-    p = (request.json or {}).get("path", "")
-    if os.path.isdir(p):
-        if sys.platform == "darwin":
-            os.system(f'open "{p}"')
-        elif os.name == "nt":
-            os.startfile(p)
-        else:
-            os.system(f'xdg-open "{p}"')
+    p = (request.json or {}).get("path", "").strip().strip('"')
+    if not os.path.isdir(p):
+        return jsonify(error="Thư mục không tồn tại"), 404
+    if os.name == "nt":
+        os.startfile(p)
+    else:
+        subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", p])
     return jsonify(ok=True)
 
 
