@@ -19,5 +19,6 @@ Cách làm: main agent chia việc → subagent code → subagent audit → main
       đã chuyển isnet-general-use 170MB từ C:\Users\dauph\.rembg sang. pip cache 4GB ở C — chưa xoá, hỏi chủ nhân.
 - [x] Audit (code-reviewer): 0 high, 8 med. Backend đã sửa: try/except start, finally running=false, lock start,
       stopped chỉ khi dừng giữa chừng, results `started` + cap 1000 + since≥0, /api/open dùng subprocess + 404.
-- [ ] Frontend sửa theo audit (subagent đang làm).
-- [ ] Handoff.
+- [x] Frontend sửa theo audit (12 mục) — test lại Chrome OK, không lỗi console.
+- [x] Commit `dea6f7d` (GUI restyle + audit fixes + model dir).
+- [x] 18:43 Handoff mới: `.planning/HANDOFF-2026-10-30-1843.md`
