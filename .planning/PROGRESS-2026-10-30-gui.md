@@ -34,4 +34,6 @@ Cách làm: main agent chia việc → subagent code → subagent audit → main
       MAX_FORM_PARTS/MAX_CONTENT_LENGTH, chặn POST khác Origin, pick lock/returncode/focus, scan cap 50k, _fetch ghi tmp+replace, exif_transpose.
 - [x] Chủ nhân: thêm kiểm tra thiết bị (Win/Mac). pose_core: `hardware_info`, `set_device`, `benchmark`, `active_provider`; app: /api/device GET/POST, /api/device/test.
       Model + thư viện nằm trong project (chủ nhân muốn để tiện gỡ) — đã đúng: `.cache/models`, `.venv*`.
-- [~] Subagent FE: dialog Thiết bị + 10 mục audit FE. Test Mac: chủ nhân tự test sau.
+- [x] Subagent FE: dialog Thiết bị + 10 mục audit FE. Test Chrome: GPU 148ms / CPU 549ms, đổi CPU<->CUDA OK. Test Mac: chủ nhân tự test sau.
+- [x] Commit `a066393` (chưa push).
+- [x] 19:25 Handoff mới: `.planning/HANDOFF-2026-10-30-1925.md`
