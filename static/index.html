@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pose Line Tool</title>
+<style>
+:root{--bg:#f5f5f7;--card:#fff;--line:#e3e3e8;--text:#1d1d1f;--sub:#6e6e73;--acc:#0071e3;--ok:#1f9d55;--err:#d70015}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text)}
+header{display:flex;align-items:center;gap:16px;padding:10px 18px;background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+header h1{font-size:16px;margin:0}
+header .dev{color:var(--sub);font-size:12px}
+.tabs{display:flex;gap:4px;margin-left:auto}
+.tabs button{border:0;background:none;padding:6px 14px;border-radius:8px;cursor:pointer;font:inherit;color:var(--sub)}
+.tabs button.on{background:var(--text);color:#fff}
+main{display:grid;grid-template-columns:330px minmax(0,1fr);gap:14px;padding:14px;min-height:calc(100vh - 50px)}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;overflow:auto;max-height:calc(100vh - 80px)}
+.group{border-top:1px solid var(--line);padding:10px 0 4px}
+.group:first-child{border-top:0;padding-top:0}
+.group h3{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--sub)}
+.row{display:grid;grid-template-columns:110px 1fr 46px;align-items:center;gap:8px;margin:6px 0}
+.row.two{grid-template-columns:110px 1fr}
+.row label{color:var(--sub);font-size:13px}
+.row output{font-variant-numeric:tabular-nums;text-align:right;font-size:12px;color:var(--sub)}
+input[type=range]{width:100%}
+select,input[type=text],input[type=number]{width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:8px;font:inherit;background:#fff}
+input[type=color]{width:100%;height:30px;border:1px solid var(--line);border-radius:8px;padding:2px;background:#fff}
+.btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 12px;cursor:pointer;font:inherit}
+.btn.pri{background:var(--acc);border-color:var(--acc);color:#fff}
+.btn.danger{color:var(--err)}
+.btn:disabled{opacity:.5;cursor:default}
+.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.stage{display:flex;flex-direction:column;gap:10px;min-width:0}
+.thumbs{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px}
+.thumbs .t{flex:0 0 auto;width:74px;cursor:pointer;border:2px solid transparent;border-radius:8px;overflow:hidden;position:relative;background:#ddd}
+.thumbs .t img{width:100%;height:96px;object-fit:cover;display:block}
+.thumbs .t.on{border-color:var(--acc)}
+.thumbs .t span{position:absolute;left:0;right:0;bottom:0;font-size:10px;background:rgba(0,0,0,.55);color:#fff;padding:1px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.thumbs .t b{position:absolute;top:2px;right:2px;font-size:9px;background:#000a;color:#fff;border-radius:4px;padding:0 4px}
+.view{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;align-items:start}
+.view.single{grid-template-columns:1fr}
+.view figure{margin:0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px;position:relative}
+.view figcaption{font-size:12px;color:var(--sub);margin-bottom:6px}
+.view img{width:100%;max-height:calc(100vh - 290px);object-fit:contain;display:block;border-radius:6px;background:#222}
+.busy{position:absolute;top:10px;right:12px;font-size:12px;color:var(--sub)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;background:#fff;padding:6px 10px;cursor:pointer;font:inherit;font-size:13px}
+.seg button.on{background:var(--text);color:#fff}
+.muted{color:var(--sub);font-size:12px}
+.hide{display:none!important}
+.progress{height:10px;background:#e8e8ed;border-radius:6px;overflow:hidden}
+.progress i{display:block;height:100%;background:var(--acc);width:0;transition:width .3s}
+.errs{font:12px ui-monospace,Menlo,monospace;color:var(--err);white-space:pre-wrap;max-height:180px;overflow:auto}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+.stat{display:flex;gap:18px;flex-wrap:wrap;font-variant-numeric:tabular-nums}
+.stat div b{display:block;font-size:20px}
+.drop{border:2px dashed var(--line);border-radius:12px;padding:10px;text-align:center;color:var(--sub)}
+.drop.over{border-color:var(--acc);color:var(--acc)}
+.check{display:flex;align-items:center;gap:6px;margin:6px 0;color:var(--sub);font-size:13px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Pose Line Tool</h1>
+  <span class="dev" id="dev"></span>
+  <div class="tabs"><button class="on" data-tab="try">Thử style</button><button data-tab="batch">Chạy hàng loạt</button></div>
+</header>
+<main>
+  <aside class="panel" id="controls"></aside>
+  <section class="stage" id="tab-try">
+    <div class="card">
+      <div class="bar">
+        <label class="btn">+ Thêm ảnh<input id="file" type="file" multiple accept="image/*" hidden></label>
+        <input id="addPath" type="text" placeholder="Hoặc dán đường dẫn file / thư mục / URL pose_lib.json" style="flex:1;min-width:240px">
+        <select id="addField" style="width:auto"><option value="previewUrl">JSON: ảnh chụp</option><option value="poseUrl">JSON: nét cũ</option></select>
+        <button class="btn" id="addBtn">Thêm</button>
+      </div>
+      <div class="drop" id="drop" style="margin-top:8px">Kéo thả ảnh vào đây · ảnh chụp (mode photo) hoặc PNG nét trắng cũ (mode lineart)</div>
+      <div class="thumbs" id="thumbs" style="margin-top:8px"></div>
+    </div>
+    <div class="bar">
+      <span class="seg" id="bg"><button data-v="photo" class="on">Trên ảnh</button><button data-v="checker">Nền caro</button><button data-v="dark">Nền tối</button><button data-v="light">Nền sáng</button></span>
+      <label class="muted">Làm tối ảnh <input type="range" id="dim" min="0" max="0.7" step="0.05" value="0.2" style="width:110px;vertical-align:middle"></label>
+      <label class="muted" id="refWrap">Ảnh nền cho lineart <select id="ref" style="width:180px"><option value="">(không)</option></select></label>
+      <span class="muted" id="info"></span>
+      <span style="margin-left:auto" class="bar">
+        <button class="btn" id="cmpBtn">So với gốc</button>
+        <button class="btn pri" id="dlBtn" disabled>Tải PNG</button>
+      </span>
+    </div>
+    <div class="view" id="view">
+      <figure id="origFig"><figcaption>Gốc</figcaption><img id="orig"></figure>
+      <figure><figcaption>Kết quả</figcaption><img id="out"><span class="busy" id="busy"></span></figure>
+    </div>
+  </section>
+  <section class="stage hide" id="tab-batch">
+    <div class="card">
+      <div class="row two"><label>Đầu vào</label><input id="bIn" type="text" placeholder="Thư mục ảnh · hoặc URL/đường dẫn pose_lib.json"></div>
+      <div class="row two"><label>Thư mục ra</label><input id="bOut" type="text" placeholder="vd /Users/sep/Desktop/shape_lib_new"></div>
+      <div class="row two"><label>Bỏ hậu tố tên</label><input id="bSuf" type="text" placeholder="vd _t hoặc _o (ca-tinh-001_t → ca-tinh-001.png)"></div>
+      <div class="row two"><label>Lọc tên chứa</label><input id="bFlt" type="text" placeholder="để trống = tất cả"></div>
+      <div class="row two"><label>Giới hạn số ảnh</label><input id="bLim" type="number" min="0" value="0"></div>
+      <div class="row two"><label>Chiều cao tối đa</label><input id="bMaxH" type="number" min="0" value="0" title="0 = giữ nguyên kích thước"></div>
+      <label class="check"><input type="checkbox" id="bSkip" checked> Bỏ qua file đã có ở thư mục ra</label>
+      <p class="muted">Dùng style đang chỉnh ở cột trái (mode <b id="bMode"></b>). Đầu vào JSON: mode photo lấy <code>previewUrl</code>, tên file = id pose; mode lineart lấy <code>poseUrl</code>, giữ tên file cũ. Style được lưu kèm <code>_style.json</code> trong thư mục ra.</p>
+      <div class="bar"><button class="btn pri" id="bStart">Bắt đầu</button><button class="btn danger" id="bStop">Dừng</button><button class="btn" id="bOpen">Mở thư mục ra</button></div>
+    </div>
+    <div class="card">
+      <div class="progress"><i id="bBar"></i></div>
+      <div class="stat" style="margin-top:10px">
+        <div><b id="sDone">0/0</b><span class="muted">xong</span></div>
+        <div><b id="sOk">0</b><span class="muted">đã tạo</span></div>
+        <div><b id="sSkip">0</b><span class="muted">bỏ qua</span></div>
+        <div><b id="sErr">0</b><span class="muted">lỗi</span></div>
+        <div><b id="sTime">0s</b><span class="muted">thời gian</span></div>
+        <div><b id="sEta">–</b><span class="muted">còn lại</span></div>
+      </div>
+      <p class="muted" id="sCur"></p>
+      <img id="sLast" style="max-height:340px;border-radius:8px">
+      <div class="errs" id="sErrs"></div>
+    </div>
+  </section>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+let META, style = {}, items = [], cur = null, bg = 'photo', lastOverlay = null, timer = null, seq = 0;
+
+const FIELDS = [
+  ['Nguồn', [
+    ['source', 'select', 'Loại đầu vào', () => META.sources, {photo: 'Ảnh chụp (tách người)', lineart: 'PNG nét cũ (restyle)'}],
+    ['model', 'select', 'Model tách nền', () => META.models, null, 'photo'],
+  ]],
+  ['Nét chính', [
+    ['outline', 'select', 'Kiểu nét', () => META.strokes, {none: 'Không', solid: 'Liền', dash: 'Đứt', dots: 'Chấm tròn'}],
+    ['width', 'range', 'Độ dày', [0.5, 12, 0.25]],
+    ['dash', 'range', 'Dài đoạn', [2, 60, 1]],
+    ['gap', 'range', 'Khoảng hở', [2, 40, 1]],
+    ['opacity', 'range', 'Độ đậm', [0.1, 1, 0.05]],
+    ['major_len', 'range', 'Nét ≥ dài này là chính', [20, 800, 10], null, 'lineart'],
+    ['holes', 'check', 'Viền cả khoảng hở trong (giữa tay - thân)', null, null, 'photo'],
+    ['edge_margin', 'range', 'Bỏ nét sát mép ảnh', [0, 20, 1]],
+  ]],
+  ['Nét phụ', [
+    ['inner', 'select', 'Kiểu nét', () => META.strokes, {none: 'Không', solid: 'Liền', dash: 'Đứt', dots: 'Chấm tròn'}],
+    ['inner_width', 'range', 'Độ dày', [0.5, 10, 0.25]],
+    ['inner_opacity', 'range', 'Độ đậm', [0.05, 1, 0.05]],
+    ['inner_dash', 'range', 'Dài đoạn', [2, 40, 1]],
+    ['inner_gap', 'range', 'Khoảng hở', [2, 30, 1]],
+    ['detail', 'range', 'Độ chi tiết', [0, 1, 0.05], null, 'photo'],
+  ]],
+  ['Chung', [
+    ['color', 'color', 'Màu nét'],
+    ['min_len', 'range', 'Bỏ nét ngắn hơn', [0, 200, 5]],
+    ['smooth', 'range', 'Làm mượt', [0, 8, 0.5]],
+    ['fill', 'check', 'Phủ mờ thân người'],
+    ['fill_opacity', 'range', 'Độ phủ', [0.02, 0.5, 0.01]],
+    ['shadow', 'check', 'Bóng đen quanh nét (dễ nhìn trên nền sáng)'],
+    ['shadow_opacity', 'range', 'Độ đậm bóng', [0, 1, 0.05]],
+    ['shadow_blur', 'range', 'Độ nhoè bóng', [0, 12, 0.5]],
+  ]],
+];
+
+function buildControls() {
+  const c = $('#controls');
+  let h = `<div class="group"><h3>Preset</h3><div class="row two"><label>Chọn</label><select id="preset"><option value="">—</option>`;
+  for (const k in META.presets) h += `<option value="p:${k}">${k}</option>`;
+  for (const k in META.saved) h += `<option value="s:${k}">★ ${k}</option>`;
+  h += `</select></div><div class="bar"><input id="saveName" type="text" placeholder="Tên style để lưu" style="flex:1"><button class="btn" id="saveBtn">Lưu</button></div><p class="muted">Kích thước tính theo ảnh cao 1000px, tự co giãn theo ảnh thật.</p></div>`;
+  for (const [title, fs] of FIELDS) {
+    h += `<div class="group"><h3>${title}</h3>`;
+    for (const [k, type, label, opt, names, only] of fs) {
+      const cls = only ? `data-only="${only}"` : '';
+      if (type === 'select') {
+        h += `<div class="row two" ${cls}><label>${label}</label><select data-k="${k}">` + opt().map(v => `<option value="${v}">${names ? names[v] || v : v}</option>`).join('') + `</select></div>`;
+      } else if (type === 'range') {
+        h += `<div class="row" ${cls}><label>${label}</label><input type="range" data-k="${k}" min="${opt[0]}" max="${opt[1]}" step="${opt[2]}"><output data-o="${k}"></output></div>`;
+      } else if (type === 'check') {
+        h += `<label class="check" ${cls}><input type="checkbox" data-k="${k}"> ${label}</label>`;
+      } else if (type === 'color') {
+        h += `<div class="row two" ${cls}><label>${label}</label><input type="color" data-k="${k}"></div>`;
+      }
+    }
+    h += `</div>`;
+  }
+  c.innerHTML = h;
+  c.querySelectorAll('[data-k]').forEach(el => el.addEventListener('input', () => {
+    const k = el.dataset.k;
+    style[k] = el.type === 'checkbox' ? el.checked : el.type === 'range' ? parseFloat(el.value) : el.value;
+    syncOutputs(); schedule();
+  }));
+  $('#preset').addEventListener('change', e => {
+    const v = e.target.value; if (!v) return;
+    const src = v.startsWith('p:') ? META.presets[v.slice(2)] : META.saved[v.slice(2)];
+    style = Object.assign({}, META.defaults, src); applyStyle(); schedule(0);
+  });
+  $('#saveBtn').onclick = async () => {
+    const name = $('#saveName').value.trim(); if (!name) return alert('Nhập tên style');
+    const r = await post('/api/style/save', {name, style});
+    if (r.error) return alert(r.error);
+    META.saved[r.name] = Object.assign({}, style);
+    const o = document.createElement('option'); o.value = 's:' + r.name; o.textContent = '★ ' + r.name; $('#preset').appendChild(o); $('#preset').value = o.value;
+  };
+}
+
+function applyStyle() {
+  document.querySelectorAll('#controls [data-k]').forEach(el => {
+    const v = style[el.dataset.k];
+    if (el.type === 'checkbox') el.checked = !!v; else el.value = v;
+  });
+  syncOutputs();
+}
+
+function syncOutputs() {
+  document.querySelectorAll('#controls [data-o]').forEach(o => o.textContent = (+style[o.dataset.o]).toString().slice(0, 5));
+  document.querySelectorAll('#controls [data-only]').forEach(el => el.classList.toggle('hide', el.dataset.only !== style.source));
+  $('#refWrap').classList.toggle('hide', style.source !== 'lineart');
+  $('#bMode').textContent = style.source;
+}
+
+async function post(url, body) {
+  const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  return r.json();
+}
+
+function addItems(list) {
+  for (const it of list) items.push(it);
+  renderThumbs();
+  if (!cur && items.length) select(items[0].id);
+}
+
+function renderThumbs() {
+  $('#thumbs').innerHTML = items.map(it => `<div class="t ${it.id === cur ? 'on' : ''}" data-id="${it.id}" title="${it.name}"><img src="${it.thumb}"><span>${it.name}</span>${it.hasAlpha ? '<b>PNG nét</b>' : ''}</div>`).join('');
+  $('#thumbs').querySelectorAll('.t').forEach(t => t.onclick = () => select(t.dataset.id));
+  const ref = $('#ref'), keep = ref.value;
+  ref.innerHTML = '<option value="">(không)</option>' + items.filter(i => !i.hasAlpha).map(i => `<option value="${i.id}">${i.name}</option>`).join('');
+  ref.value = keep;
+}
+
+function select(id) {
+  cur = id; renderThumbs();
+  const it = items.find(i => i.id === id);
+  if (it.hasAlpha && style.source !== 'lineart') { style.source = 'lineart'; applyStyle(); }
+  if (!it.hasAlpha && style.source !== 'photo') { style.source = 'photo'; applyStyle(); }
+  $('#orig').src = it.thumb;
+  schedule(0);
+}
+
+function schedule(ms = 350) { clearTimeout(timer); timer = setTimeout(run, ms); }
+
+async function run() {
+  if (!cur) return;
+  const my = ++seq;
+  $('#busy').textContent = 'đang vẽ…';
+  const r = await post('/api/preview', {id: cur, style, bg, dim: +$('#dim').value, ref: $('#ref').value});
+  if (my !== seq) return;
+  $('#busy').textContent = '';
+  if (r.error) { $('#info').textContent = 'Lỗi: ' + r.error; return; }
+  $('#out').src = r.view; lastOverlay = r.overlay; $('#dlBtn').disabled = false;
+  $('#info').textContent = `${r.size[0]}×${r.size[1]} · ${r.ms} ms`;
+}
+
+$('#dlBtn').onclick = () => {
+  const it = items.find(i => i.id === cur);
+  const a = document.createElement('a'); a.href = lastOverlay; a.download = it.name.replace(/\.[^.]+$/, '').replace(/_[to]$/, '') + '.png'; a.click();
+};
+$('#cmpBtn').onclick = () => { $('#view').classList.toggle('single'); $('#origFig').classList.toggle('hide'); };
+$('#bg').querySelectorAll('button').forEach(b => b.onclick = () => {
+  $('#bg').querySelectorAll('button').forEach(x => x.classList.remove('on')); b.classList.add('on'); bg = b.dataset.v; schedule(0);
+});
+$('#dim').oninput = () => schedule(200);
+$('#ref').onchange = () => schedule(0);
+
+async function uploadFiles(files) {
+  const fd = new FormData(); for (const f of files) fd.append('files', f);
+  $('#busy').textContent = 'đang tải ảnh…';
+  const r = await (await fetch('/api/upload', {method: 'POST', body: fd})).json();
+  $('#busy').textContent = '';
+  addItems(r.items);
+}
+$('#file').onchange = e => uploadFiles(e.target.files);
+const drop = $('#drop');
+['dragenter', 'dragover'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+document.addEventListener('drop', e => { if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files); });
+$('#addBtn').onclick = async () => {
+  const path = $('#addPath').value.trim(); if (!path) return;
+  $('#addBtn').disabled = true; $('#addBtn').textContent = 'Đang tải…';
+  const r = await post('/api/add_path', {path, field: $('#addField').value});
+  $('#addBtn').disabled = false; $('#addBtn').textContent = 'Thêm';
+  if (r.error) return alert(r.error);
+  addItems(r.items);
+};
+
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.tabs button').forEach(x => x.classList.remove('on')); b.classList.add('on');
+  $('#tab-try').classList.toggle('hide', b.dataset.tab !== 'try');
+  $('#tab-batch').classList.toggle('hide', b.dataset.tab !== 'batch');
+});
+
+const LS = 'poseLineBatch';
+const saved = JSON.parse(localStorage.getItem(LS) || '{}');
+for (const k of ['bIn', 'bOut', 'bSuf', 'bFlt']) if (saved[k]) $('#' + k).value = saved[k];
+let poll = null;
+$('#bStart').onclick = async () => {
+  const cfg = {input: $('#bIn').value, output: $('#bOut').value, strip_suffix: $('#bSuf').value, filter: $('#bFlt').value, limit: +$('#bLim').value, max_height: +$('#bMaxH').value, skip_existing: $('#bSkip').checked, style};
+  localStorage.setItem(LS, JSON.stringify({bIn: cfg.input, bOut: cfg.output, bSuf: cfg.strip_suffix, bFlt: cfg.filter}));
+  const r = await post('/api/batch/start', cfg);
+  if (r.error) return alert(r.error);
+  clearInterval(poll); poll = setInterval(status, 1000); status();
+};
+$('#bStop').onclick = () => post('/api/batch/stop', {});
+$('#bOpen').onclick = () => post('/api/open', {path: $('#bOut').value});
+async function status() {
+  const s = await (await fetch('/api/batch/status')).json();
+  $('#bBar').style.width = (s.total ? s.done / s.total * 100 : 0) + '%';
+  $('#sDone').textContent = `${s.done}/${s.total}`; $('#sOk').textContent = s.ok; $('#sSkip').textContent = s.skip; $('#sErr').textContent = s.error_count;
+  $('#sTime').textContent = s.elapsed + 's';
+  const per = s.ok ? s.elapsed / Math.max(1, s.done) : 0;
+  $('#sEta').textContent = s.running && per ? Math.round(per * (s.total - s.done)) + 's' : '–';
+  $('#sCur').textContent = s.running ? 'Đang xử lý: ' + s.current : (s.total ? 'Xong · ' + s.out : '');
+  if (s.last) $('#sLast').src = s.last;
+  $('#sErrs').textContent = s.errors.join('\n');
+  if (!s.running) clearInterval(poll);
+}
+
+(async () => {
+  META = await (await fetch('/api/meta')).json();
+  $('#dev').textContent = 'Thiết bị: ' + META.device;
+  style = Object.assign({}, META.defaults, Object.values(META.presets)[1]);
+  buildControls(); applyStyle();
+  $('#preset').value = 'p:' + Object.keys(META.presets)[1];
+  status();
+})();
+</script>
+</body>
+</html>

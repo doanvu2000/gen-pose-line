@@ -1,0 +1,338 @@
+import base64
+import glob
+import io
+import json
+import os
+import sys
+import threading
+import time
+import traceback
+import urllib.request
+import uuid
+import webbrowser
+
+from flask import Flask, jsonify, request, send_from_directory
+from PIL import Image
+
+import pose_core as pc
+
+ROOT = pc.ROOT
+DL_DIR = os.path.join(ROOT, ".cache", "download")
+STYLE_DIR = os.path.join(ROOT, "styles")
+IMG_EXT = (".png", ".jpg", ".jpeg", ".webp")
+UA = {"User-Agent": "Mozilla/5.0 PoseLineTool"}
+
+app = Flask(__name__, static_folder=os.path.join(ROOT, "static"), static_url_path="/static")
+work_lock = threading.Lock()
+uploads = {}
+
+
+def _b64(img, fmt="PNG", max_side=None):
+    if max_side and max(img.size) > max_side:
+        s = max_side / max(img.size)
+        img = img.resize((int(img.width * s), int(img.height * s)), Image.LANCZOS)
+    buf = io.BytesIO()
+    if fmt == "JPEG":
+        img.convert("RGB").save(buf, "JPEG", quality=88)
+    else:
+        img.save(buf, "PNG")
+    return f"data:image/{fmt.lower()};base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def _fetch(url):
+    os.makedirs(DL_DIR, exist_ok=True)
+    name = url.split("?")[0].rstrip("/").rsplit("/", 1)[-1] or uuid.uuid4().hex
+    path = os.path.join(DL_DIR, name)
+    if not os.path.exists(path):
+        with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=60) as r:
+            data = r.read()
+        with open(path, "wb") as f:
+            f.write(data)
+    return path
+
+
+def _load(path):
+    if path.startswith("http://") or path.startswith("https://"):
+        path = _fetch(path)
+    im = Image.open(path)
+    im.load()
+    return im
+
+
+@app.get("/")
+def index():
+    return send_from_directory(app.static_folder, "index.html")
+
+
+@app.get("/api/meta")
+def meta():
+    os.makedirs(STYLE_DIR, exist_ok=True)
+    saved = {}
+    for f in sorted(glob.glob(os.path.join(STYLE_DIR, "*.json"))):
+        try:
+            saved[os.path.splitext(os.path.basename(f))[0]] = json.load(open(f, encoding="utf-8"))
+        except Exception:
+            pass
+    return jsonify(
+        presets={k: v.to_dict() for k, v in pc.PRESETS.items()},
+        saved=saved,
+        defaults=pc.Style().to_dict(),
+        models=pc.MODELS,
+        strokes=pc.STROKES,
+        sources=pc.SOURCES,
+        device=pc.device_info(),
+        root=ROOT,
+    )
+
+
+@app.post("/api/upload")
+def upload():
+    out = []
+    for f in request.files.getlist("files"):
+        im = Image.open(f.stream)
+        im.load()
+        uid = uuid.uuid4().hex[:10]
+        uploads[uid] = (f.filename, im)
+        out.append({"id": uid, "name": f.filename, "thumb": _b64(im.convert("RGB"), "JPEG", 240), "hasAlpha": im.mode in ("RGBA", "LA", "P") and _has_alpha(im)})
+    return jsonify(items=out)
+
+
+def _has_alpha(im):
+    a = im.convert("RGBA").getchannel("A")
+    return a.getextrema()[0] < 250
+
+
+@app.post("/api/add_path")
+def add_path():
+    p = (request.json or {}).get("path", "").strip().strip('"')
+    files = []
+    if p.startswith("http") and p.lower().endswith(".json"):
+        files = [u for u, _ in _json_items(p, (request.json or {}).get("field", "previewUrl"))][:20]
+    elif os.path.isdir(p):
+        files = _scan(p)[:20]
+    elif p:
+        files = [p]
+    out = []
+    for fp in files:
+        try:
+            im = _load(fp)
+        except Exception as e:
+            return jsonify(error=f"{fp}: {e}"), 400
+        uid = uuid.uuid4().hex[:10]
+        name = os.path.basename(fp.split("?")[0])
+        uploads[uid] = (name, im)
+        out.append({"id": uid, "name": name, "thumb": _b64(im.convert("RGB"), "JPEG", 240), "hasAlpha": _has_alpha(im)})
+    return jsonify(items=out)
+
+
+@app.post("/api/preview")
+def preview():
+    body = request.json or {}
+    uid = body.get("id")
+    if uid not in uploads:
+        return jsonify(error="Ảnh không còn, thêm lại ảnh"), 404
+    st = pc.Style.from_dict(body.get("style"))
+    name, im = uploads[uid]
+    t = time.time()
+    try:
+        with work_lock:
+            ov = pc.render(im, st)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify(error=str(e)), 500
+    dt = time.time() - t
+    bg = body.get("bg", "photo")
+    ref = body.get("ref")
+    if bg == "photo" and st.source == "photo":
+        view = pc.composite(im, ov, float(body.get("dim", 0.2)))
+    elif bg == "photo" and ref in uploads:
+        view = pc.composite(uploads[ref][1], ov, float(body.get("dim", 0.2)))
+    elif bg == "dark":
+        view = Image.new("RGBA", ov.size, (28, 28, 30, 255))
+        view.alpha_composite(ov)
+    elif bg == "light":
+        view = Image.new("RGBA", ov.size, (235, 235, 235, 255))
+        view.alpha_composite(ov)
+    else:
+        view = pc.checker(ov.size, ov)
+    return jsonify(view=_b64(view, "JPEG", 1400), overlay=_b64(ov), size=list(ov.size), ms=int(dt * 1000))
+
+
+@app.post("/api/style/save")
+def style_save():
+    body = request.json or {}
+    name = "".join(c for c in body.get("name", "").strip() if c.isalnum() or c in "-_ ").strip()
+    if not name:
+        return jsonify(error="Thiếu tên style"), 400
+    os.makedirs(STYLE_DIR, exist_ok=True)
+    with open(os.path.join(STYLE_DIR, name + ".json"), "w", encoding="utf-8") as f:
+        json.dump(pc.Style.from_dict(body.get("style")).to_dict(), f, ensure_ascii=False, indent=2)
+    return jsonify(ok=True, name=name)
+
+
+def _scan(folder):
+    out = []
+    for dp, _, fs in os.walk(folder):
+        for f in sorted(fs):
+            if f.lower().endswith(IMG_EXT):
+                out.append(os.path.join(dp, f))
+    return sorted(out)
+
+
+def _json_items(url, field):
+    if url.startswith("http"):
+        with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=60) as r:
+            data = json.loads(r.read().decode("utf-8"))
+    else:
+        data = json.load(open(url, encoding="utf-8"))
+    items = []
+
+    def walk(g):
+        for p in g.get("content") or []:
+            items.append(p)
+        for s in g.get("subCates") or []:
+            walk(s)
+
+    for key in ("poses", "photobooth"):
+        for g in data.get(key) or []:
+            walk(g)
+    seen = set()
+    out = []
+    for p in items:
+        u = p.get(field)
+        if not u or u in seen:
+            continue
+        seen.add(u)
+        stem = p.get("id") if field == "previewUrl" else os.path.splitext(u.rsplit("/", 1)[-1])[0]
+        out.append((u, stem))
+    return out
+
+
+class Batch:
+    def __init__(self):
+        self.state = {"running": False, "done": 0, "total": 0, "ok": 0, "skip": 0, "errors": [], "current": "", "last": None, "out": "", "started": 0, "finished": 0}
+        self.stop = threading.Event()
+        self.thread = None
+
+    def start(self, cfg):
+        if self.state["running"]:
+            return "Đang chạy batch khác"
+        src = cfg.get("input", "").strip().strip('"')
+        out = cfg.get("output", "").strip().strip('"')
+        if not src or not out:
+            return "Thiếu thư mục vào / ra"
+        st = pc.Style.from_dict(cfg.get("style"))
+        jobs = []
+        if src.lower().endswith(".json"):
+            field = "poseUrl" if st.source == "lineart" else "previewUrl"
+            jobs = [(u, s + ".png") for u, s in _json_items(src, field)]
+        elif os.path.isdir(src):
+            for f in _scan(src):
+                rel = os.path.relpath(f, src)
+                stem = os.path.splitext(rel)[0]
+                suf = cfg.get("strip_suffix", "")
+                if suf and stem.endswith(suf):
+                    stem = stem[: -len(suf)]
+                jobs.append((f, stem + ".png"))
+        else:
+            return "Đầu vào phải là thư mục ảnh hoặc file/URL .json"
+        flt = cfg.get("filter", "").strip()
+        if flt:
+            jobs = [j for j in jobs if flt in os.path.basename(j[0])]
+        lim = int(cfg.get("limit") or 0)
+        if lim > 0:
+            jobs = jobs[:lim]
+        os.makedirs(out, exist_ok=True)
+        with open(os.path.join(out, "_style.json"), "w", encoding="utf-8") as f:
+            json.dump(st.to_dict(), f, ensure_ascii=False, indent=2)
+        self.stop.clear()
+        self.state = {"running": True, "done": 0, "total": len(jobs), "ok": 0, "skip": 0, "errors": [], "current": "", "last": None, "out": out, "started": time.time(), "finished": 0}
+        self.thread = threading.Thread(target=self._run, args=(jobs, out, st, cfg), daemon=True)
+        self.thread.start()
+        return None
+
+    def _run(self, jobs, out, st, cfg):
+        skip = bool(cfg.get("skip_existing", True))
+        max_h = int(cfg.get("max_height") or 0)
+        for src, rel in jobs:
+            if self.stop.is_set():
+                break
+            dst = os.path.join(out, rel)
+            self.state["current"] = rel
+            try:
+                if skip and os.path.exists(dst):
+                    self.state["skip"] += 1
+                else:
+                    im = _load(src)
+                    if max_h and im.height > max_h:
+                        im = im.resize((int(im.width * max_h / im.height), max_h), Image.LANCZOS)
+                    with work_lock:
+                        ov = pc.render(im, st)
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    ov.save(dst, optimize=True)
+                    self.state["ok"] += 1
+                    if self.state["ok"] % 3 == 1:
+                        self.state["last"] = _b64(pc.checker(ov.size, ov), "JPEG", 420)
+            except Exception as e:
+                self.state["errors"].append(f"{rel}: {e}")
+            self.state["done"] += 1
+        self.state["running"] = False
+        self.state["finished"] = time.time()
+
+
+batch = Batch()
+
+
+@app.post("/api/batch/start")
+def batch_start():
+    err = batch.start(request.json or {})
+    if err:
+        return jsonify(error=err), 400
+    return jsonify(ok=True, total=batch.state["total"])
+
+
+@app.get("/api/batch/status")
+def batch_status():
+    s = dict(batch.state)
+    s["errors"] = s["errors"][-30:]
+    s["error_count"] = len(batch.state["errors"])
+    end = s["finished"] or time.time()
+    s["elapsed"] = round(end - s["started"], 1) if s["started"] else 0
+    return jsonify(s)
+
+
+@app.post("/api/batch/stop")
+def batch_stop():
+    batch.stop.set()
+    return jsonify(ok=True)
+
+
+@app.post("/api/open")
+def open_folder():
+    p = (request.json or {}).get("path", "")
+    if os.path.isdir(p):
+        if sys.platform == "darwin":
+            os.system(f'open "{p}"')
+        elif os.name == "nt":
+            os.startfile(p)
+        else:
+            os.system(f'xdg-open "{p}"')
+    return jsonify(ok=True)
+
+
+def main():
+    for s in (sys.stdout, sys.stderr):
+        try:
+            s.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+    port = int(os.environ.get("POSE_TOOL_PORT", "7860"))
+    url = f"http://127.0.0.1:{port}"
+    print(f"Pose Line Tool: {url}  |  thiết bị: {pc.device_info()}")
+    if os.environ.get("POSE_TOOL_NO_BROWSER") != "1":
+        threading.Timer(1.2, lambda: webbrowser.open(url)).start()
+    app.run(host="127.0.0.1", port=port, debug=False, threaded=True)
+
+
+if __name__ == "__main__":
+    main()
