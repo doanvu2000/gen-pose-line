@@ -1,0 +1,66 @@
+/* CSS stand-ins for lib/motion.ts presets: view .26s, fade .2s, sheet spring 420/32, thumb spring 520/38. */
+
+:root {
+  --dur-fade: .2s;
+  --dur-view: .26s;
+  --dur-sheet: .32s;
+  --ease-sheet: cubic-bezier(.32, 1.18, .5, 1);
+}
+
+.m-view-enter {
+  animation: mViewIn var(--dur-view) var(--ease) both;
+}
+
+.m-view-enter.back {
+  animation-name: mViewInBack;
+}
+
+.m-fade-in {
+  animation: mFade var(--dur-fade) var(--ease) both;
+}
+
+.m-sheet-in {
+  animation: mSheetIn var(--dur-sheet) var(--ease-sheet) both;
+}
+
+.m-sheet-out {
+  animation: mSheetOut var(--dur-fade) var(--ease) both;
+}
+
+.m-toast-in {
+  animation: mToastIn var(--dur-sheet) var(--ease-sheet) both;
+}
+
+.m-toast-out {
+  animation: mToastOut .18s var(--ease) both;
+}
+
+.m-drawer-in {
+  animation: mDrawerIn var(--dur-sheet) var(--ease-sheet) both;
+}
+
+.m-drawer-out {
+  animation: mDrawerOut .22s var(--ease) both;
+}
+
+.m-menu-in {
+  animation: mMenuIn var(--dur-fade) var(--ease) both;
+}
+
+/* Stagger: set style="--i: <index>" on each item; capped so long lists don't wait. */
+.m-stagger > * {
+  animation: mItemIn .28s var(--ease) both;
+  animation-delay: calc(min(var(--i, 0), 20) * 18ms);
+}
+
+@keyframes mViewIn { from { opacity: 0; transform: translateX(14px); } }
+@keyframes mViewInBack { from { opacity: 0; transform: translateX(-14px); } }
+@keyframes mFade { from { opacity: 0; } }
+@keyframes mSheetIn { from { opacity: 0; transform: translateY(16px) scale(.97); } }
+@keyframes mSheetOut { to { opacity: 0; transform: translateY(8px) scale(.98); } }
+@keyframes mToastIn { from { opacity: 0; transform: translateY(14px) scale(.96); } }
+@keyframes mToastOut { to { opacity: 0; transform: translateY(6px) scale(.98); } }
+@keyframes mDrawerIn { from { opacity: .6; transform: translateX(400px); } }
+@keyframes mDrawerOut { to { opacity: 0; transform: translateX(400px); } }
+@keyframes mMenuIn { from { opacity: 0; transform: translateY(-4px) scale(.96); } }
+@keyframes mItemIn { from { opacity: 0; transform: translateY(8px) scale(.985); } }

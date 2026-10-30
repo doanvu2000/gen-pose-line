@@ -210,7 +210,9 @@ def _json_items(url, field):
 
 class Batch:
     def __init__(self):
-        self.state = {"running": False, "done": 0, "total": 0, "ok": 0, "skip": 0, "errors": [], "current": "", "last": None, "out": "", "started": 0, "finished": 0}
+        self.state = {"running": False, "stopped": False, "done": 0, "total": 0, "ok": 0, "skip": 0, "errors": [], "current": "", "last": None, "out": "", "started": 0, "finished": 0}
+        self.error_items = []
+        self.cfg = {}
         self.stop = threading.Event()
         self.thread = None
 
@@ -246,7 +248,9 @@ class Batch:
         with open(os.path.join(out, "_style.json"), "w", encoding="utf-8") as f:
             json.dump(st.to_dict(), f, ensure_ascii=False, indent=2)
         self.stop.clear()
-        self.state = {"running": True, "done": 0, "total": len(jobs), "ok": 0, "skip": 0, "errors": [], "current": "", "last": None, "out": out, "started": time.time(), "finished": 0}
+        self.error_items = []
+        self.cfg = {k: v for k, v in cfg.items() if k != "style"} | {"style": st.to_dict(), "jobs": len(jobs)}
+        self.state = {"running": True, "stopped": False, "done": 0, "total": len(jobs), "ok": 0, "skip": 0, "errors": [], "current": "", "last": None, "out": out, "started": time.time(), "finished": 0}
         self.thread = threading.Thread(target=self._run, args=(jobs, out, st, cfg), daemon=True)
         self.thread.start()
         return None
@@ -275,7 +279,9 @@ class Batch:
                         self.state["last"] = _b64(pc.checker(ov.size, ov), "JPEG", 420)
             except Exception as e:
                 self.state["errors"].append(f"{rel}: {e}")
+                self.error_items.append({"file": rel, "src": src, "error": str(e), "time": time.strftime("%Y-%m-%d %H:%M:%S")})
             self.state["done"] += 1
+        self.state["stopped"] = self.stop.is_set()
         self.state["running"] = False
         self.state["finished"] = time.time()
 
@@ -299,6 +305,12 @@ def batch_status():
     end = s["finished"] or time.time()
     s["elapsed"] = round(end - s["started"], 1) if s["started"] else 0
     return jsonify(s)
+
+
+@app.get("/api/batch/log")
+def batch_log():
+    s = {k: v for k, v in batch.state.items() if k not in ("last", "errors")}
+    return jsonify(state=s, config=batch.cfg, errors=batch.error_items, device=pc.device_info(), time=time.strftime("%Y-%m-%d %H:%M:%S"))
 
 
 @app.post("/api/batch/stop")
