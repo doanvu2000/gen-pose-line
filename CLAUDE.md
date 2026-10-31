@@ -10,6 +10,8 @@ Hướng dẫn cho Claude Code khi được nhờ "setup / chạy tool này trê
   `U2NET_HOME` trong `pose_core.py`), **không** về ổ hệ thống. Nếu repo nằm ở ổ C mà máy còn ổ khác
   rộng hơn, hỏi chủ máy có muốn clone sang ổ đó không.
 - Git LFS không cần. Mạng cần để `pip install` và tải model lần đầu (~170 MB, birefnet ~1 GB).
+  Tách nét từng người (ảnh nhóm) tải thêm YOLOX 34 MB + RTMPose 48 MB + SAM (GPU: ViT-L ~1,2 GB,
+  CPU: ViT-B ~360 MB) ở lần render ảnh nhóm đầu tiên.
 
 ## Windows
 

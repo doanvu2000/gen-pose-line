@@ -20,10 +20,15 @@ MODELS = ["auto", "isnet-general-use", "u2net_human_seg", "u2net", "birefnet-por
 SOLO_MODEL, GROUP_MODEL = "u2net_human_seg", "isnet-general-use"
 FACE_MODEL = os.path.join(MODEL_DIR, "face", "face_detection_yunet_2023mar.onnx")
 FACE_URL = "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx"
+DET_MODEL = os.path.join(MODEL_DIR, "detect", "object_detection_yolox_2022nov.onnx")
+DET_URL = "https://github.com/opencv/opencv_zoo/raw/main/models/object_detection_yolox/object_detection_yolox_2022nov.onnx"
+POSE_MODEL = os.path.join(MODEL_DIR, "pose", "rtmpose-m-body7-256x192.onnx")
+POSE_URL = "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/rtmpose-m_simcc-body7_pt-body7_420e-256x192-e48f03d0_20230504.zip"
 STROKES = ["none", "solid", "dash", "dots"]
 SOURCES = ["photo", "lineart"]
 
 _sessions = {}
+_aux = {}
 _session_lock = threading.RLock()
 _face = None
 _face_lock = threading.Lock()
@@ -47,6 +52,7 @@ class Style:
     color: str = "#FFFFFF"
     opacity: float = 1.0
     holes: bool = True
+    split: bool = True
     smooth: float = 2.5
     edge_margin: float = 4.0
     fill: bool = False
@@ -145,6 +151,7 @@ def set_device(want):
             return
         os.environ["POSE_TOOL_DEVICE"] = want
         _sessions.clear()
+        _aux.clear()
 
 
 def active_provider(model="isnet-general-use"):
@@ -725,6 +732,322 @@ def resolve_model(img: Image.Image, model: str, people: int = None):
     return (SOLO_MODEL if people == 1 else GROUP_MODEL), people
 
 
+def _download(url, dst, member=None):
+    import urllib.request
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    tmp = dst + ".part"
+    urllib.request.urlretrieve(url, tmp)
+    if member:
+        import zipfile
+        with zipfile.ZipFile(tmp) as z:
+            name = next(n for n in z.namelist() if n.endswith(member))
+            with z.open(name) as src, open(dst + ".unz", "wb") as out:
+                out.write(src.read())
+        os.remove(tmp)
+        tmp = dst + ".unz"
+    os.replace(tmp, dst)
+
+
+def _aux_session(key):
+    with _session_lock:
+        if key not in _aux:
+            import onnxruntime as ort
+            if key == "sam":
+                from types import SimpleNamespace
+                from rembg.sessions.sam import SamSession
+                # ViT-L separates overlapping people far better, but its encoder is too slow for batches on CPU.
+                big = _providers()[0] != "CPUExecutionProvider"
+                enc, dec = SamSession.download_models(sam_model="sam_vit_l_0b3195" if big else "sam_vit_b_01ec64")
+                # rembg's SamSession ignores providers and would run on CPU even with CUDA available.
+                _aux[key] = SimpleNamespace(encoder=ort.InferenceSession(str(enc), providers=_providers()),
+                                            decoder=ort.InferenceSession(str(dec), providers=_providers()))
+            else:
+                path, url, member = (DET_MODEL, DET_URL, None) if key == "det" else (POSE_MODEL, POSE_URL, "end2end.onnx")
+                if not os.path.exists(path):
+                    _download(url, path, member)
+                _aux[key] = ort.InferenceSession(path, providers=_providers())
+        return _aux[key]
+
+
+def detect_people(rgb, score=0.3, nms=0.45):
+    H, W = rgb.shape[:2]
+    s = _aux_session("det")
+    r = min(640 / W, 640 / H)
+    pad = np.full((640, 640, 3), 114, np.uint8)
+    pad[:int(H * r), :int(W * r)] = cv2.resize(cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), (int(W * r), int(H * r)))
+    out = s.run(None, {s.get_inputs()[0].name: pad.transpose(2, 0, 1)[None].astype(np.float32)})[0][0]
+    grids, strides = [], []
+    for st in (8, 16, 32):
+        g = 640 // st
+        yv, xv = np.meshgrid(np.arange(g), np.arange(g), indexing="ij")
+        grids.append(np.stack([xv, yv], -1).reshape(-1, 2))
+        strides.append(np.full((g * g, 1), st))
+    grids, strides = np.concatenate(grids), np.concatenate(strides)
+    xy = (out[:, :2] + grids) * strides
+    wh = np.exp(out[:, 2:4]) * strides
+    conf = out[:, 4] * out[:, 5]
+    ok = conf > score
+    b = np.concatenate([xy - wh / 2, xy + wh / 2], 1)[ok] / r
+    conf = conf[ok]
+    if not len(b):
+        return np.zeros((0, 5))
+    idx = np.array(cv2.dnn.NMSBoxes(np.concatenate([b[:, :2], b[:, 2:] - b[:, :2]], 1).tolist(), conf.tolist(), score, nms)).flatten()
+    return np.concatenate([b[idx], conf[idx, None]], 1)
+
+
+_POSE_MEAN = np.array([123.675, 116.28, 103.53], np.float32)
+_POSE_STD = np.array([58.395, 57.12, 57.375], np.float32)
+
+
+def keypoints(rgb, box):
+    x0, y0, x1, y1 = box[:4]
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    w, h = (x1 - x0) * 1.25, (y1 - y0) * 1.25
+    if w / h > 192 / 256:
+        h = w * 256 / 192
+    else:
+        w = h * 192 / 256
+    M = cv2.getAffineTransform(np.float32([[cx - w / 2, cy - h / 2], [cx + w / 2, cy - h / 2], [cx - w / 2, cy + h / 2]]),
+                               np.float32([[0, 0], [192, 0], [0, 256]]))
+    crop = cv2.warpAffine(rgb, M, (192, 256), flags=cv2.INTER_LINEAR)
+    s = _aux_session("pose")
+    sx, sy = s.run(None, {s.get_inputs()[0].name: ((crop.astype(np.float32) - _POSE_MEAN) / _POSE_STD).transpose(2, 0, 1)[None]})
+    kx, ky = sx[0].argmax(1) / 2.0, sy[0].argmax(1) / 2.0
+    conf = np.minimum(sx[0].max(1), sy[0].max(1))
+    pts = np.stack([kx, ky, np.ones_like(kx)], 1) @ cv2.invertAffineTransform(M).T
+    return np.concatenate([pts, conf[:, None]], 1)
+
+
+KP_SCORE, PERSON_MIN_H, SAME_PERSON = 0.3, 0.3, 0.03
+
+
+def _people(rgb, body, min_people=2):
+    H, W = body.shape
+    boxes = detect_people(rgb)
+    if len(boxes) < min_people:
+        return []
+    hmax = (boxes[:, 3] - boxes[:, 1]).max()
+    people = []
+    for b in boxes[np.argsort(-boxes[:, 4])]:
+        if b[3] - b[1] < PERSON_MIN_H * hmax:
+            continue
+        k = keypoints(rgb, b)
+        good = k[:, 2] > KP_SCORE
+        if good.sum() < 5:
+            continue
+        xs = np.clip(k[good, 0].astype(int), 0, W - 1)
+        ys = np.clip(k[good, 1].astype(int), 0, H - 1)
+        # Balcony passers-by and false boxes land mostly off the cut-out.
+        if body[ys, xs].mean() < 0.5:
+            continue
+        dup = False
+        for _, q in people:
+            g = good & (q[:, 2] > KP_SCORE)
+            if g.sum() >= 4 and np.median(np.linalg.norm(k[g, :2] - q[g, :2], axis=1)) < SAME_PERSON * H:
+                dup = True
+                break
+        if not dup:
+            people.append((b, k))
+    return people
+
+
+def _sam_embed(sam, rgb):
+    h0, w0 = rgb.shape[:2]
+    s = min(1024 / w0, 684 / h0)
+    w, h = round(w0 * s), round(h0 * s)
+    pad = np.zeros((684, 1024, 3), np.float32)
+    pad[:h, :w] = cv2.resize(rgb, (w, h), interpolation=cv2.INTER_AREA if s < 1 else cv2.INTER_CUBIC)
+    return sam.encoder.run(None, {sam.encoder.get_inputs()[0].name: pad})[0], s, w, h
+
+
+def _sam_decode(sam, emb, pts, labels, passes=1):
+    mi, has = np.zeros((1, 1, 256, 256), np.float32), np.zeros(1, np.float32)
+    for _ in range(passes):
+        m, iou, low = sam.decoder.run(None, {
+            "image_embeddings": emb, "point_coords": np.asarray(pts, np.float32)[None],
+            "point_labels": np.asarray(labels, np.float32)[None], "mask_input": mi, "has_mask_input": has,
+            "orig_im_size": np.array([684, 1024], np.float32)})
+        mi, has = low.astype(np.float32), np.ones(1, np.float32)
+    return m[0, 0], float(iou[0, 0])
+
+
+BODY_GROW = 0.04
+
+
+def person_labels(img: Image.Image, body: np.ndarray):
+    """Full-res label map (0 = background, label n+1 = people[n]) plus each person's keypoints; the cut-out is
+    extended where SAM finds body parts isnet dropped."""
+    from scipy.ndimage import distance_transform_edt
+    rgb = np.array(img.convert("RGB"))
+    H, W = body.shape
+    people = _people(rgb, body.astype(bool), min_people=1)
+    if not people:
+        return body.astype(np.uint8), np.zeros((0, 17, 3))
+    sam = _aux_session("sam")
+    emb, s, w, h = _sam_embed(sam, rgb)
+    sb = cv2.resize(body, (w, h), interpolation=cv2.INTER_NEAREST).astype(bool)
+    # isnet drops dark hair against dark backgrounds; only accept SAM pixels hugging the existing cut-out.
+    near = distance_transform_edt(~sb) <= BODY_GROW * h
+    own_pts = [k[k[:, 2] > KP_SCORE, :2] for _, k in people]
+    # Feet lower in frame = closer to camera, so paint back to front and let the front person win overlaps.
+    feet = [max([b[3]] + [y for _, y, c in k[15:17] if c > KP_SCORE]) for b, k in people]
+    margin = 0.04 * H
+    lab = np.zeros((h, w), np.uint8)
+    for n in np.argsort(feet):
+        b = people[n][0]
+        own = own_pts[n]
+        neg = [p for j, o in enumerate(own_pts) if j != n for p in o
+               if b[0] <= p[0] <= b[2] and b[1] <= p[1] <= b[3] and np.linalg.norm(own - p, axis=1).min() > 0.04 * H]
+        neg = np.array(neg).reshape(-1, 2)
+        pts = np.concatenate([[b[:2], b[2:4]], own, neg, [[0, 0]]]) * s
+        labels = np.concatenate([[2, 3], np.ones(len(own)), np.zeros(len(neg)), [-1]])
+        m, _ = _sam_decode(sam, emb, pts, labels, passes=2)
+        m = (m[:h, :w] > 0) & (sb | near)
+        x0, y0, x1, y1 = [int(v * s) for v in (b[0] - margin, b[1] - margin, b[2] + margin, b[3] + margin)]
+        box = np.zeros_like(m)
+        box[max(0, y0):y1, max(0, x0):x1] = True
+        lab[m & box] = n + 1
+    for v in range(1, len(people) + 1):
+        cnt, cc, stats, _ = cv2.connectedComponentsWithStats((lab == v).astype(np.uint8), 8)
+        if cnt > 2:
+            # A front person's arm can cut someone's head off as a separate island; keep islands holding their own keypoints.
+            areas = stats[1:, cv2.CC_STAT_AREA]
+            kp = (own_pts[v - 1] * s).astype(int)
+            kp = kp[(kp[:, 0] >= 0) & (kp[:, 0] < w) & (kp[:, 1] >= 0) & (kp[:, 1] < h)]
+            anchored = set(cc[kp[:, 1], kp[:, 0]].tolist())
+            for i in range(1, cnt):
+                if areas[i - 1] < 0.15 * areas.max() and i not in anchored:
+                    lab[cc == i] = 0
+    ext = sb | (lab > 0)
+    if lab.any():
+        _, (iy, ix) = distance_transform_edt(lab == 0, return_indices=True)
+        lab = lab[iy, ix]
+    lab[~ext] = 0
+    full = cv2.resize(cv2.medianBlur(lab, 7), (W, H), interpolation=cv2.INTER_NEAREST)
+    grow = cv2.resize(ext.astype(np.uint8), (W, H), interpolation=cv2.INTER_LINEAR) > 0
+    full[~(body.astype(bool) | grow)] = 0
+    holes = (body > 0) & (full == 0)
+    if holes.any() and full.any():
+        _, (iy, ix) = distance_transform_edt(full == 0, return_indices=True)
+        full[holes] = full[iy, ix][holes]
+    return full, np.stack([k for _, k in people])
+
+
+PART_STEP, PART_IOU, PART_STABLE = 0.03, 0.75, 0.8
+_ARMS = [(5, 7, 9), (6, 8, 10)]
+_TORSO = [0, 11, 12]
+
+
+def _limb_mask(sam, emb, k, sh, el, wr, region):
+    ok = k[:, 2] > KP_SCORE
+    if not (ok[el] and ok[wr]):
+        return None
+    pos = [k[el, :2], k[wr, :2], (k[el, :2] + k[wr, :2]) / 2]
+    if ok[sh]:
+        pos.append(k[sh, :2] * 0.4 + k[el, :2] * 0.6)
+    other = sh + 1 if sh == 5 else sh - 1
+    neg = [k[i, :2] for i in _TORSO + [other] if ok[i]]
+    pos, neg = np.array(pos), np.array(neg).reshape(-1, 2)
+    # Torso keypoints right next to the arm would cut the elbow off; drop them.
+    neg = neg[[np.linalg.norm(pos - q, axis=1).min() > 0.08 * region.shape[0] for q in neg]] if len(neg) else neg
+    pts = np.concatenate([pos, neg, [[0, 0]]])
+    labels = [1] * len(pos) + [0] * len(neg) + [-1]
+    lg, iou = _sam_decode(sam, emb, pts, labels, passes=2)
+    h, w = region.shape
+    m = (lg[:h, :w] > 0) & region
+    if iou < 0.7 or m.sum() < 40 or m.sum() > 0.4 * region.sum():
+        return None
+    return m
+
+
+def person_parts(img: Image.Image, lab: np.ndarray, kps: np.ndarray) -> np.ndarray:
+    """Per-person SAM segments (hair, face, sleeves, trousers...) as int labels person*1000+k; each person is
+    encoded from its own crop because at whole-group scale a face is only a few pixels."""
+    rgb = np.array(img.convert("RGB"))
+    H, W = lab.shape
+    sam = _aux_session("sam")
+    seg = lab.astype(np.int32) * 1000
+    for v in range(1, int(lab.max()) + 1):
+        region_full = lab == v
+        ys, xs = np.nonzero(region_full)
+        if len(ys) < 100:
+            continue
+        m = int(0.02 * H)
+        x0, y0, x1, y1 = max(0, xs.min() - m), max(0, ys.min() - m), min(W, xs.max() + m + 1), min(H, ys.max() + m + 1)
+        emb, s, w, h = _sam_embed(sam, rgb[y0:y1, x0:x1])
+        region = cv2.resize(region_full[y0:y1, x0:x1].astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST).astype(bool)
+        step = max(4, int(PART_STEP * h))
+        gy, gx = np.mgrid[step // 2:h:step, step // 2:w:step]
+        segs = []
+        for x, y in zip(gx.ravel(), gy.ravel()):
+            if not region[y, x]:
+                continue
+            lg, iou = _sam_decode(sam, emb, [[x, y], [0, 0]], [1, -1])
+            lg = lg[:h, :w]
+            mk = (lg > 0) & region
+            area = mk.sum()
+            hi, lo = ((lg > 1) & region).sum(), ((lg > -1) & region).sum()
+            if iou < PART_IOU or area < 40 or lo == 0 or hi / lo < PART_STABLE or area > 0.85 * region.sum():
+                continue
+            segs.append((area, mk))
+        segs.sort(key=lambda q: -q[0])
+        keep = []
+        for area, mk in segs:
+            if all((mk & k).sum() / (mk | k).sum() < 0.8 for k in keep):
+                keep.append(mk)
+        local = np.zeros((h, w), np.int32)
+        for i, mk in enumerate(keep):  # large first, so small parts (face, hands) stay on top
+            local[mk] = i + 1
+        if v <= len(kps):
+            # Sleeves matching the jacket colour merge into the torso on a plain grid; segment arms from the skeleton.
+            k = kps[v - 1].copy()
+            k[:, 0] = (k[:, 0] - x0) * s
+            k[:, 1] = (k[:, 1] - y0) * s
+            for j, (sh, el, wr) in enumerate(_ARMS):
+                arm = _limb_mask(sam, emb, k, sh, el, wr, region)
+                if arm is not None:
+                    local[arm] = 900 + j
+        local = cv2.resize(local.astype(np.float32), (x1 - x0, y1 - y0), interpolation=cv2.INTER_NEAREST).astype(np.int32)
+        sub = seg[y0:y1, x0:x1]
+        rf = region_full[y0:y1, x0:x1]
+        sub[rf] = v * 1000 + local[rf]
+    seg = cv2.medianBlur(seg.astype(np.float32), 5).astype(np.int32)
+    seg[lab == 0] = 0
+    return seg
+
+
+def _split_cached(img, body):
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    big = _providers()[0] != "CPUExecutionProvider"
+    key = hashlib.sha1(np.ascontiguousarray(body).tobytes() + img.convert("RGB").tobytes() + (b"split3-L" if big else b"split3-B")).hexdigest()
+    path = os.path.join(CACHE_DIR, key + ".split.npz")
+    if os.path.exists(path):
+        try:
+            with np.load(path) as z:
+                return z["lab"], z["seg"]
+        except Exception:
+            pass
+    lab, kps = person_labels(img, body)
+    seg = person_parts(img, lab, kps)
+    tmp = f"{path}.{os.getpid()}.part.npz"
+    np.savez_compressed(tmp, lab=lab, seg=seg)
+    os.replace(tmp, path)
+    return lab, seg
+
+
+def _label_edges(L):
+    e = np.zeros(L.shape, bool)
+    a, b = L[:, :-1], L[:, 1:]
+    e[:, :-1] |= (a != b) & (a > 0) & (b > 0)
+    a, b = L[:-1], L[1:]
+    e[:-1] |= (a != b) & (a > 0) & (b > 0)
+    return cv2.dilate(e.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
+
+
+def _edge_paths(e, st, unit, W, H):
+    return _postprocess(trace_skeleton(skeletonize(e)), 1.0, st, unit, W, H) if e.any() else []
+
+
 def render_photo(img: Image.Image, st: Style, mask: np.ndarray = None) -> Image.Image:
     img = img.convert("RGB")
     W, H = img.size
@@ -732,11 +1055,22 @@ def render_photo(img: Image.Image, st: Style, mask: np.ndarray = None) -> Image.
     if mask is None:
         mask = person_mask(img, resolve_model(img, st.model)[0])
     body = clean_mask(mask)
+    lab = seg = None
+    if st.split:
+        lab, seg = _split_cached(img, body)
+        body = (lab > 0).astype(np.uint8)
     outer = outline_paths(body, st, unit) if st.outline != "none" else []
     a = _draw((W, H), outer, st.outline, st.width * unit, st.dash * unit, st.gap * unit) * st.opacity
     line_a = a.copy()
+    if st.split:
+        between = _label_edges(lab)
+        # Separators use the thin inner stroke; presets without inner lines still need them visible, so borrow the outline kind.
+        kind = st.inner if st.inner != "none" else st.outline
+        sa = _draw((W, H), _edge_paths(between, st, unit, W, H), kind, st.inner_width * unit, st.inner_dash * unit, st.inner_gap * unit) * st.inner_opacity
+        a = np.maximum(a, sa)
+        line_a = np.maximum(line_a, sa)
     if st.inner != "none":
-        inner = photo_inner(img, body, st, unit)
+        inner = _edge_paths(_label_edges(seg) & ~between, st, unit, W, H) if st.split else photo_inner(img, body, st, unit)
         ia = _draw((W, H), inner, st.inner, st.inner_width * unit, st.inner_dash * unit, st.inner_gap * unit) * st.inner_opacity
         a = np.maximum(a, ia)
         line_a = np.maximum(line_a, ia)
