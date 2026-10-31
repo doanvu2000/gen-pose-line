@@ -10,7 +10,9 @@ Tool web chạy local tạo ảnh `poseUrl` (nét trắng, nền trong suốt) h
 | Windows (CPU) | double-click `run_win.bat` |
 | Windows + GPU NVIDIA (RTX) | double-click `run_win_gpu.bat` (venv riêng `.venv-gpu`, `onnxruntime-gpu` kèm CUDA/cuDNN qua pip, không cần cài CUDA Toolkit) |
 
-Lần đầu tool tự tạo `.venv`, cài thư viện, rồi tải model tách nền (~170 MB, vào `~/.u2net`). Những lần sau chạy ngay.
+Lần đầu tool tự tạo `.venv`, cài thư viện, rồi tải model tách nền (~170 MB, vào `.cache/models` trong repo). Những lần sau chạy ngay.
+
+Setup chi tiết Windows/macOS (cả cho Claude Code): xem [`CLAUDE.md`](CLAUDE.md).
 
 ## 2 nguồn đầu vào
 
