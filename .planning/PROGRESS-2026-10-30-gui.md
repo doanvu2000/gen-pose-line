@@ -37,3 +37,22 @@ Cách làm: main agent chia việc → subagent code → subagent audit → main
 - [x] Subagent FE: dialog Thiết bị + 10 mục audit FE. Test Chrome: GPU 148ms / CPU 549ms, đổi CPU<->CUDA OK. Test Mac: chủ nhân tự test sau.
 - [x] Commit `a066393` (chưa push).
 - [x] 19:25 Handoff mới: `.planning/HANDOFF-2026-10-30-1925.md`
+- [x] Push `a066393`, `f2858cc` lên origin/main (chủ nhân cho).
+- [x] Ô nhập mã hex cạnh màu nét (normHex #RGB/#RRGGBB, viền đỏ khi sai, presetDirty so màu không phân biệt hoa thường) — test Chrome OK, commit `fbd9d32` (chưa push, chờ chủ nhân).
+- [x] 20:04 Handoff mới: `.planning/HANDOFF-2026-10-30-2004.md`
+
+## Phiên 2026-10-31 (sau HANDOFF-2026-10-30-2004) — chủ nhân yêu cầu audit lại
+- [x] Audit 2 agent (python-reviewer, typescript-reviewer), 14+14 finding; main lọc và sửa.
+- [x] Backend: chặn Host lạ (DNS rebinding); `_fetch` cache theo sha1(URL) + giới hạn 200MB; id catalog JSON qua `_safe_parts`/`_inside`; chặn output trùng/nằm trong input; 409 đổi thiết bị/benchmark khi batch chạy; ghi PNG tmp→rename; mask cache đọc lỗi thì tính lại; `Style.from_dict` ép kiểu + clamp + whitelist; `_session` có lock, `active_provider` không nạp model (thêm `loaded`); hints `{level,text}`; `uploads` LRU 40; `/api/upload` bỏ qua file hỏng; `_run` bắt lỗi ngoài item; parse limit/max_height ở `_start`; skip_existing chỉ khi `_style.json` cũ trùng style; giữ input của batch cuối khi dọn; tên style dành riêng Windows.
+- [x] Frontend: modal chồng (toast "Xem kết quả" đóng dialog Thiết bị, drop bị chặn khi có modal, inert chỉ gỡ khi hết modal); Huỷ upload có cờ, hiện cả lúc đọc thư mục; ô đường dẫn sai thì trả lại, Bắt đầu chờ tra cứu xong; `runDevTests` try/finally + benchmark `ok:false` hiện lỗi; viewer prev/next theo bộ lọc + preload; menu lỗi phím mũi tên/Home/End/Tab + aria-expanded; toast tách nút hành động + nút đóng, dừng đếm khi hover/focus; ô hex chỉ áp khi đủ 6 ký tự, Enter/Esc, không xoá khi alt-tab; tab Thử style lọc file theo đuôi ảnh.
+- [x] Kiểm: `node --check` OK; curl: host lạ 403, output trong input 400, style "con" 400; Chrome: hex, dialog Thiết bị ("model chưa nạp"), batch 8 ảnh GPU, toast→viewer đóng dialog, inert gỡ đúng, console 0 lỗi.
+- [ ] Còn để lại (không sửa): preview chạy full độ phân giải (chậm ảnh lớn), trùng tên output `a.jpg`/`a.png`, chưa có nút dọn cache, nút "Chạy lại ảnh lỗi".
+- [x] Chủ nhân thử u2net_human_seg thấy mất người (ban-than/best-friend-101); so 3 model: isnet đủ 4 người, u2net hụt quần jean, human_seg mất bạn bên trái.
+- [x] Đếm người + model Tự động + lọc 1 người (chủ nhân chọn "Cả hai"):
+  - `pose_core.count_faces` (YuNet `.cache/models/face/face_detection_yunet_2023mar.onnx`, 227KB, tự tải nếu thiếu), `count_blobs` (mask isnet, vùng ≥20% vùng lớn nhất) khi 0 mặt, `count_people`, `resolve_model`; `MODELS` thêm `auto`.
+  - `app.py`: preview trả `model`/`people`; batch `only_single` → skip có `reason`; results thêm `people`, `model`, `reason`.
+  - FE: tên model có chú thích, checkbox `#bSingle`, dòng kết quả "lọc: N người", chip viewer "· human_seg · 1 người".
+  - Đánh giá `workspace/pose-ref` 128 ảnh có nhãn: đúng 123/128 (chỉ đếm mặt: 110/128). Sai: 3 solo → ≥2 (người nền), 2 couple → 1 (sau lưng, nắm tay).
+  - Chrome: thư mục couple + lọc → 5 bị lọc, 2 chạy (đúng 2 ca sai đã biết); console 0 lỗi.
+- [x] Demo Chrome cho chủ nhân: Tự động (nhóm → isnet, solo → human_seg); batch `pose-ref` + lọc 1 người: 84 tạo / 88 lọc, 34s, ra `output/demo-1nguoi`. Thấy Tự động làm mất con hươu ở `cong-vien-049`. Chủ nhân chốt **giữ nguyên** (mặc định vẫn isnet, Tự động và lọc là tuỳ chọn).
+- [x] `state["current"]` dùng `/` (trước lẫn `\`).

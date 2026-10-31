@@ -1,6 +1,8 @@
 import hashlib
 import io
 import os
+import re
+import threading
 from dataclasses import dataclass, asdict, field
 
 import cv2
@@ -14,11 +16,17 @@ CACHE_DIR = os.path.join(ROOT, ".cache", "masks")
 # rembg defaults to ~/.rembg (or ~/.u2net) on the system drive; keep the large models next to the tool instead.
 os.environ.setdefault("U2NET_HOME", os.path.join(ROOT, ".cache", "models"))
 MODEL_DIR = os.environ["U2NET_HOME"]
-MODELS = ["isnet-general-use", "u2net_human_seg", "u2net", "birefnet-portrait"]
+MODELS = ["auto", "isnet-general-use", "u2net_human_seg", "u2net", "birefnet-portrait"]
+SOLO_MODEL, GROUP_MODEL = "u2net_human_seg", "isnet-general-use"
+FACE_MODEL = os.path.join(MODEL_DIR, "face", "face_detection_yunet_2023mar.onnx")
+FACE_URL = "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx"
 STROKES = ["none", "solid", "dash", "dots"]
 SOURCES = ["photo", "lineart"]
 
 _sessions = {}
+_session_lock = threading.RLock()
+_face = None
+_face_lock = threading.Lock()
 
 
 @dataclass
@@ -53,9 +61,40 @@ class Style:
 
     @classmethod
     def from_dict(cls, d):
-        known = {k: v for k, v in (d or {}).items() if k in cls.__dataclass_fields__}
-        return cls(**known)
+        st = cls()
+        for k, v in (d if isinstance(d, dict) else {}).items():
+            if k not in cls.__dataclass_fields__:
+                continue
+            cur = getattr(st, k)
+            try:
+                if isinstance(cur, bool):
+                    v = bool(v)
+                elif isinstance(cur, float):
+                    lo, hi = _LIMITS.get(k, (0.0, 1.0))
+                    v = min(hi, max(lo, float(v)))
+                elif k in _CHOICES:
+                    if v not in _CHOICES[k]:
+                        continue
+                elif k == "color":
+                    if not isinstance(v, str) or not _HEX.match(v):
+                        continue
+                else:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            setattr(st, k, v)
+        return st
 
+
+# Upper bounds are ~2x the UI sliders; tiny dash/gap or huge widths make rendering loop for minutes inside work_lock.
+_LIMITS = {
+    "width": (0.5, 30), "dash": (1, 200), "gap": (1, 200), "inner_width": (0.5, 30), "inner_opacity": (0, 1),
+    "inner_dash": (1, 200), "inner_gap": (1, 200), "major_len": (0, 3000), "min_len": (0, 1000), "detail": (0, 1),
+    "opacity": (0, 1), "smooth": (0, 20), "edge_margin": (0, 100), "fill_opacity": (0, 1), "shadow_opacity": (0, 1),
+    "shadow_blur": (0, 30),
+}
+_CHOICES = {"source": SOURCES, "outline": STROKES, "inner": STROKES, "model": MODELS}
+_HEX = re.compile(r"^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 
 PRESETS = {
     "1. Dash viền ngoài": Style(source="photo", outline="dash", inner="none"),
@@ -68,10 +107,11 @@ PRESETS = {
 
 
 def _session(model):
-    if model not in _sessions:
-        from rembg import new_session
-        _sessions[model] = new_session(model, providers=_providers())
-    return _sessions[model]
+    with _session_lock:
+        if model not in _sessions:
+            from rembg import new_session
+            _sessions[model] = new_session(model, providers=_providers())
+        return _sessions[model]
 
 
 DEVICES = ["auto", "cuda", "coreml", "cpu"]
@@ -100,16 +140,21 @@ def set_device(want):
     want = (want or "auto").lower()
     if want not in DEVICES:
         raise ValueError(f"Thiết bị không hợp lệ: {want}")
-    os.environ["POSE_TOOL_DEVICE"] = want
-    _sessions.clear()
+    with _session_lock:
+        if want == os.environ.get("POSE_TOOL_DEVICE", "auto").lower() and _sessions:
+            return
+        os.environ["POSE_TOOL_DEVICE"] = want
+        _sessions.clear()
 
 
 def active_provider(model="isnet-general-use"):
-    # ORT silently falls back to CPU when CUDA/CoreML fail to initialise, so ask the live session.
+    # ORT silently falls back to CPU when CUDA/CoreML fail to initialise, so ask the live session; never load one just to answer.
+    with _session_lock:
+        sess = _sessions.get(model) or next(iter(_sessions.values()), None)
     try:
-        return _session(model).inner_session.get_providers()[0]
+        return sess.inner_session.get_providers()[0] if sess else None
     except Exception:
-        return _providers()[0]
+        return None
 
 
 def device_info():
@@ -176,11 +221,11 @@ def hardware_info():
     hints = []
     is_mac = platform.system() == "Darwin"
     if any(g["vendor"] == "nvidia" for g in gpus) and not avail["cuda"]:
-        hints.append("Máy có GPU NVIDIA nhưng đang cài onnxruntime bản CPU. Chạy run_win_gpu.bat (Windows) để dùng GPU.")
+        hints.append({"level": "warn", "text": "Máy có GPU NVIDIA nhưng đang cài onnxruntime bản CPU. Chạy run_win_gpu.bat (Windows) để dùng GPU."})
     if is_mac and avail["coreml"] and want != "coreml":
-        hints.append("Mac có thể thử CoreML (GPU/Neural Engine). Bấm Kiểm tra tốc độ để so với CPU trước khi chọn.")
+        hints.append({"level": "info", "text": "Mac có thể thử CoreML (GPU/Neural Engine). Bấm Kiểm tra tốc độ để so với CPU trước khi chọn."})
     if not gpus and not is_mac:
-        hints.append("Không thấy GPU NVIDIA. Xử lý bằng CPU.")
+        hints.append({"level": "info", "text": "Không thấy GPU NVIDIA. Xử lý bằng CPU."})
     return {
         "os": f"{platform.system()} {platform.release()} ({platform.machine()})",
         "cpu": _cpu_name(),
@@ -191,7 +236,8 @@ def hardware_info():
         "providers": [p.replace("ExecutionProvider", "") for p in av],
         "available": avail,
         "selected": want,
-        "active": active_provider().replace("ExecutionProvider", ""),
+        "active": (active_provider() or _providers()[0]).replace("ExecutionProvider", ""),
+        "loaded": active_provider() is not None,
         "hints": hints,
         "model_dir": MODEL_DIR,
         "models": _model_sizes(),
@@ -239,11 +285,16 @@ def person_mask(img: Image.Image, model: str) -> np.ndarray:
     key = hashlib.sha1(buf.getvalue() + model.encode()).hexdigest()
     path = os.path.join(CACHE_DIR, key + ".png")
     if os.path.exists(path):
-        return np.array(Image.open(path).convert("L"))
+        try:
+            return np.array(Image.open(path).convert("L"))
+        except Exception:
+            pass
     from rembg import remove
     out = remove(img.convert("RGB"), session=_session(model), only_mask=True)
     m = np.array(out.convert("L"))
-    Image.fromarray(m).save(path)
+    tmp = f"{path}.{os.getpid()}.part"
+    Image.fromarray(m).save(tmp, format="PNG")
+    os.replace(tmp, path)
     return m
 
 
@@ -617,12 +668,69 @@ def _compose(W, H, a, line_a, st):
     return res
 
 
+def _face_detector():
+    global _face
+    if _face is None:
+        if not os.path.exists(FACE_MODEL):
+            import urllib.request
+            os.makedirs(os.path.dirname(FACE_MODEL), exist_ok=True)
+            tmp = FACE_MODEL + ".part"
+            urllib.request.urlretrieve(FACE_URL, tmp)
+            os.replace(tmp, FACE_MODEL)
+        _face = cv2.FaceDetectorYN.create(FACE_MODEL, "", (320, 320), 0.5, 0.3, 5000)
+    return _face
+
+
+FACE_SCORE, FACE_MIN_RATIO, BLOB_MIN_RATIO = 0.6, 0.15, 0.2
+
+
+def count_faces(img: Image.Image) -> int:
+    im = img.convert("RGB")
+    s = min(1.0, 960 / max(im.size))
+    if s < 1:
+        im = im.resize((max(1, int(im.width * s)), max(1, int(im.height * s))), Image.BILINEAR)
+    bgr = cv2.cvtColor(np.array(im), cv2.COLOR_RGB2BGR)
+    with _face_lock:
+        det = _face_detector()
+        det.setInputSize((bgr.shape[1], bgr.shape[0]))
+        _, faces = det.detect(bgr)
+    if faces is None:
+        return 0
+    faces = faces[faces[:, -1] >= FACE_SCORE]
+    if not len(faces):
+        return 0
+    # Faces far smaller than the largest one are usually background passers-by.
+    sizes = faces[:, 2] * faces[:, 3]
+    return int((sizes >= sizes.max() * FACE_MIN_RATIO).sum())
+
+
+def count_blobs(img: Image.Image) -> int:
+    m = clean_mask(person_mask(img.convert("RGB"), GROUP_MODEL)).astype(np.uint8)
+    n, _, stats, _ = cv2.connectedComponentsWithStats(m, connectivity=8)
+    areas = stats[1:, cv2.CC_STAT_AREA]
+    return int((areas >= areas.max() * BLOB_MIN_RATIO).sum()) if len(areas) else 0
+
+
+def count_people(img: Image.Image) -> int:
+    # Faces first; back views and tiny faces have none, so fall back to separate regions of the cut-out mask.
+    n = count_faces(img)
+    return n if n else count_blobs(img)
+
+
+def resolve_model(img: Image.Image, model: str, people: int = None):
+    if model != "auto":
+        return model, people
+    if people is None:
+        people = count_people(img)
+    return (SOLO_MODEL if people == 1 else GROUP_MODEL), people
+
+
 def render_photo(img: Image.Image, st: Style, mask: np.ndarray = None) -> Image.Image:
     img = img.convert("RGB")
     W, H = img.size
     unit = H / 1000.0
     if mask is None:
-        mask = person_mask(img, st.model)
+        mask = person_mask(img, resolve_model(img, st.model)[0])
     body = clean_mask(mask)
     outer = outline_paths(body, st, unit) if st.outline != "none" else []
     a = _draw((W, H), outer, st.outline, st.width * unit, st.dash * unit, st.gap * unit) * st.opacity

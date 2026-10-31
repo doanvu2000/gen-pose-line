@@ -1,5 +1,7 @@
 import base64
+import dataclasses
 import glob
+import hashlib
 import io
 import json
 import os
@@ -12,6 +14,7 @@ import traceback
 import urllib.request
 import uuid
 import webbrowser
+from collections import OrderedDict
 
 from flask import Flask, jsonify, request, send_from_directory
 from PIL import Image, ImageOps
@@ -31,16 +34,29 @@ app.config["MAX_FORM_PARTS"] = 20000
 app.config["MAX_CONTENT_LENGTH"] = 4 * 1024 ** 3
 work_lock = threading.Lock()
 pick_lock = threading.Lock()
-uploads = {}
+uploads = OrderedDict()
+UPLOAD_CAP = 40
 SCAN_CAP = 50000
+FETCH_CAP = 200 * 1024 ** 2
 
 
 @app.before_request
 def same_origin_only():
+    # DNS rebinding makes evil.com resolve to 127.0.0.1 with a matching Origin, so pin the Host header too.
+    if request.host.rsplit(":", 1)[0].strip("[]").lower() not in ("127.0.0.1", "localhost", "::1"):
+        return jsonify(error="Yêu cầu bị chặn (sai host)"), 403
     # Any web page can POST to 127.0.0.1 without preflight; only accept writes from this app's own pages.
     origin = request.headers.get("Origin")
     if request.method == "POST" and origin and origin.split("://", 1)[-1] != request.host:
         return jsonify(error="Yêu cầu bị chặn (khác nguồn)"), 403
+
+
+def _keep_upload(name, im):
+    uid = uuid.uuid4().hex[:10]
+    uploads[uid] = (name, im)
+    while len(uploads) > UPLOAD_CAP:
+        uploads.popitem(last=False)
+    return uid
 
 
 def _b64(img, fmt="PNG", max_side=None):
@@ -57,11 +73,14 @@ def _b64(img, fmt="PNG", max_side=None):
 
 def _fetch(url):
     os.makedirs(DL_DIR, exist_ok=True)
-    name = url.split("?")[0].rstrip("/").rsplit("/", 1)[-1] or uuid.uuid4().hex
-    path = os.path.join(DL_DIR, name)
+    # Catalogs reuse basenames across folders (catA/1.png, catB/1.png), so key the cache by the full URL.
+    ext = os.path.splitext(url.split("?")[0])[1].lower()
+    path = os.path.join(DL_DIR, hashlib.sha1(url.encode()).hexdigest()[:20] + (ext if ext in IMG_EXT else ".img"))
     if not os.path.exists(path):
         with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=60) as r:
-            data = r.read()
+            data = r.read(FETCH_CAP + 1)
+        if len(data) > FETCH_CAP:
+            raise ValueError("File tải về quá lớn")
         tmp = f"{path}.{uuid.uuid4().hex[:6]}.part"
         with open(tmp, "wb") as f:
             f.write(data)
@@ -105,15 +124,20 @@ def meta():
 
 @app.post("/api/upload")
 def upload():
-    out = []
+    out, skipped = [], []
     for f in request.files.getlist("files"):
-        im = Image.open(f.stream)
-        im.load()
-        im = ImageOps.exif_transpose(im)
-        uid = uuid.uuid4().hex[:10]
-        uploads[uid] = (f.filename, im)
+        try:
+            im = Image.open(f.stream)
+            im.load()
+            im = ImageOps.exif_transpose(im)
+        except Exception:
+            skipped.append(f.filename)
+            continue
+        uid = _keep_upload(f.filename, im)
         out.append({"id": uid, "name": f.filename, "thumb": _b64(im.convert("RGB"), "JPEG", 240), "hasAlpha": im.mode in ("RGBA", "LA", "P") and _has_alpha(im)})
-    return jsonify(items=out)
+    if not out and skipped:
+        return jsonify(error="Không đọc được ảnh: " + ", ".join(skipped[:5])), 400
+    return jsonify(items=out, skipped=skipped)
 
 
 def _has_alpha(im):
@@ -123,10 +147,14 @@ def _has_alpha(im):
 
 @app.post("/api/add_path")
 def add_path():
-    p = (request.json or {}).get("path", "").strip().strip('"')
+    body = request.get_json(silent=True) or {}
+    p = _json_path()
     files = []
     if p.startswith("http") and p.lower().endswith(".json"):
-        files = [u for u, _ in _json_items(p, (request.json or {}).get("field", "previewUrl"))][:20]
+        try:
+            files = [u for u, _ in _json_items(p, body.get("field", "previewUrl"))][:20]
+        except Exception as e:
+            return jsonify(error=f"Không đọc được JSON: {e}"), 400
     elif os.path.isdir(p):
         files = _scan(p)[:20]
     elif p:
@@ -137,9 +165,8 @@ def add_path():
             im = _load(fp)
         except Exception as e:
             return jsonify(error=f"{fp}: {e}"), 400
-        uid = uuid.uuid4().hex[:10]
         name = os.path.basename(fp.split("?")[0])
-        uploads[uid] = (name, im)
+        uid = _keep_upload(name, im)
         out.append({"id": uid, "name": name, "thumb": _b64(im.convert("RGB"), "JPEG", 240), "hasAlpha": _has_alpha(im)})
     return jsonify(items=out)
 
@@ -153,8 +180,12 @@ def preview():
     st = pc.Style.from_dict(body.get("style"))
     name, im = uploads[uid]
     t = time.time()
+    people = None
     try:
         with work_lock:
+            if st.source == "photo" and st.model == "auto":
+                model, people = pc.resolve_model(im, st.model)
+                st = dataclasses.replace(st, model=model)
             ov = pc.render(im, st)
     except Exception as e:
         traceback.print_exc()
@@ -174,7 +205,7 @@ def preview():
         view.alpha_composite(ov)
     else:
         view = pc.checker(ov.size, ov)
-    return jsonify(view=_b64(view, "JPEG", 1400), overlay=_b64(ov), size=list(ov.size), ms=int(dt * 1000))
+    return jsonify(view=_b64(view, "JPEG", 1400), overlay=_b64(ov), size=list(ov.size), ms=int(dt * 1000), model=st.model if st.source == "photo" else None, people=people)
 
 
 @app.get("/api/device")
@@ -182,8 +213,14 @@ def device():
     return jsonify(pc.hardware_info())
 
 
+def _batch_busy():
+    return jsonify(error="Đang chạy hàng loạt, đổi thiết bị sau khi xong"), 409
+
+
 @app.post("/api/device")
 def device_set():
+    if batch.state["running"]:
+        return _batch_busy()
     try:
         with work_lock:
             pc.set_device((request.json or {}).get("device"))
@@ -198,6 +235,8 @@ def device_test():
     want = (request.json or {}).get("device", "auto")
     if want not in pc.DEVICES:
         return jsonify(error="Thiết bị không hợp lệ"), 400
+    if batch.state["running"]:
+        return _batch_busy()
     with work_lock:
         return jsonify(pc.benchmark(want))
 
@@ -205,9 +244,11 @@ def device_test():
 @app.post("/api/style/save")
 def style_save():
     body = request.json or {}
-    name = "".join(c for c in body.get("name", "").strip() if c.isalnum() or c in "-_ ").strip()
+    name = "".join(c for c in str(body.get("name", "")).strip() if c.isalnum() or c in "-_ ").strip()[:80]
     if not name:
         return jsonify(error="Thiếu tên style"), 400
+    if name.split(".")[0].lower() in WIN_RESERVED:
+        return jsonify(error="Tên style trùng tên dành riêng của Windows"), 400
     os.makedirs(STYLE_DIR, exist_ok=True)
     with open(os.path.join(STYLE_DIR, name + ".json"), "w", encoding="utf-8") as f:
         json.dump(pc.Style.from_dict(body.get("style")).to_dict(), f, ensure_ascii=False, indent=2)
@@ -249,9 +290,13 @@ def _json_items(url, field):
         if not u or u in seen:
             continue
         seen.add(u)
-        stem = p.get("id") if field == "previewUrl" else os.path.splitext(u.rsplit("/", 1)[-1])[0]
-        out.append((u, stem))
+        stem = str(p.get("id") or "") if field == "previewUrl" else os.path.splitext(u.rsplit("/", 1)[-1])[0]
+        out.append((u, stem or hashlib.sha1(u.encode()).hexdigest()[:12]))
     return out
+
+
+class _Skip(Exception):
+    pass
 
 
 class Batch:
@@ -279,12 +324,23 @@ class Batch:
         out = cfg.get("output", "").strip().strip('"')
         if not src or not out:
             return "Thiếu thư mục vào / ra"
+        try:
+            lim = int(cfg.get("limit") or 0)
+            max_h = int(cfg.get("max_height") or 0)
+        except (TypeError, ValueError):
+            return "Giới hạn số ảnh / chiều cao phải là số"
         st = pc.Style.from_dict(cfg.get("style"))
         jobs = []
         if src.lower().endswith(".json"):
             field = "poseUrl" if st.source == "lineart" else "previewUrl"
-            jobs = [(u, s + ".png") for u, s in _json_items(src, field)]
+            # Catalog ids are untrusted (remote JSON); keep each output inside the output folder.
+            for u, stem in _json_items(src, field):
+                parts = _safe_parts(stem)
+                if parts and _inside(os.path.join(out, *parts), out):
+                    jobs.append((u, os.path.join(*parts) + ".png"))
         elif os.path.isdir(src):
+            if _inside(out, src):
+                return "Thư mục ra không được trùng hoặc nằm trong thư mục vào"
             for f in _scan(src):
                 rel = os.path.relpath(f, src)
                 stem = os.path.splitext(rel)[0]
@@ -297,12 +353,18 @@ class Batch:
         flt = cfg.get("filter", "").strip()
         if flt:
             jobs = [j for j in jobs if flt in os.path.basename(j[0])]
-        lim = int(cfg.get("limit") or 0)
         if lim > 0:
             jobs = jobs[:lim]
         os.makedirs(out, exist_ok=True)
-        with open(os.path.join(out, "_style.json"), "w", encoding="utf-8") as f:
+        style_path = os.path.join(out, "_style.json")
+        try:
+            same_style = json.load(open(style_path, encoding="utf-8")) == st.to_dict()
+        except Exception:
+            same_style = not os.path.exists(style_path)
+        with open(style_path, "w", encoding="utf-8") as f:
             json.dump(st.to_dict(), f, ensure_ascii=False, indent=2)
+        # Skipping files drawn with an older style would leave the folder mixed while _style.json claims one style.
+        cfg = {**cfg, "skip_existing": bool(cfg.get("skip_existing", True)) and same_style, "max_height": max_h}
         self.stop.clear()
         self.error_items = []
         self.results = []
@@ -315,21 +377,27 @@ class Batch:
     def _run(self, jobs, out, st, cfg):
         try:
             self._loop(jobs, out, st, cfg)
+        except Exception as e:
+            traceback.print_exc()
+            self.state["errors"].append(f"Dừng do lỗi: {e}")
+            self.error_items.append({"file": "", "src": "", "error": f"Dừng do lỗi: {e}", "time": time.strftime("%Y-%m-%d %H:%M:%S")})
         finally:
             self.state["stopped"] = self.stop.is_set() and self.state["done"] < self.state["total"]
             self.state["running"] = False
             self.state["finished"] = time.time()
 
     def _loop(self, jobs, out, st, cfg):
-        skip = bool(cfg.get("skip_existing", True))
-        max_h = int(cfg.get("max_height") or 0)
+        skip = cfg["skip_existing"]
+        max_h = cfg["max_height"]
+        solo_only = bool(cfg.get("only_single")) and st.source == "photo"
+        need_count = solo_only or (st.source == "photo" and st.model == "auto")
         for src, rel in jobs:
             if self.stop.is_set():
                 break
             dst = os.path.join(out, rel)
-            self.state["current"] = rel
+            self.state["current"] = rel.replace(os.sep, "/")
             t0 = time.time()
-            status, err = "ok", ""
+            status, err, reason, people, model = "ok", "", "", None, None
             try:
                 if skip and os.path.exists(dst):
                     self.state["skip"] += 1
@@ -339,17 +407,33 @@ class Batch:
                     if max_h and im.height > max_h:
                         im = im.resize((int(im.width * max_h / im.height), max_h), Image.LANCZOS)
                     with work_lock:
-                        ov = pc.render(im, st)
+                        if need_count:
+                            people = pc.count_people(im)
+                    if solo_only and people != 1:
+                        self.state["skip"] += 1
+                        status, reason = "skip", "không thấy mặt người" if not people else f"{people} người"
+                        raise _Skip
+                    run_st = st
+                    if st.source == "photo":
+                        model = pc.resolve_model(im, st.model, people)[0]
+                        run_st = dataclasses.replace(st, model=model)
+                    with work_lock:
+                        ov = pc.render(im, run_st)
                     os.makedirs(os.path.dirname(dst), exist_ok=True)
-                    ov.save(dst, optimize=True)
+                    # Write then rename: a half-written PNG would otherwise count as done on the next skip_existing run.
+                    tmp = dst + ".part"
+                    ov.save(tmp, format="PNG", optimize=True)
+                    os.replace(tmp, dst)
                     self.state["ok"] += 1
                     if self.state["ok"] % 3 == 1:
                         self.state["last"] = _b64(pc.checker(ov.size, ov), "JPEG", 420)
+            except _Skip:
+                pass
             except Exception as e:
                 status, err = "err", str(e)
                 self.state["errors"].append(f"{rel}: {e}")
                 self.error_items.append({"file": rel, "src": src, "error": err, "time": time.strftime("%Y-%m-%d %H:%M:%S")})
-            self.results.append({"i": len(self.results), "file": rel.replace(os.sep, "/"), "src": src, "status": status, "error": err, "ms": int((time.time() - t0) * 1000)})
+            self.results.append({"i": len(self.results), "file": rel.replace(os.sep, "/"), "src": src, "status": status, "error": err, "reason": reason, "people": people, "model": model, "ms": int((time.time() - t0) * 1000)})
             self.state["done"] += 1
 
 
@@ -501,10 +585,11 @@ def _inside(path, root):
 def _clean_inputs(keep):
     if not os.path.isdir(INPUT_DIR):
         return
-    busy = batch.state["running"] and batch.cfg.get("input", "")
+    # Keep the last batch's input even when finished: its results still link back to these originals.
+    last = batch.cfg.get("input", "")
     for d in os.listdir(INPUT_DIR):
         full = os.path.join(INPUT_DIR, d)
-        if d != keep and not (busy and _inside(busy, full)):
+        if d != keep and not (last and _inside(last, full)):
             shutil.rmtree(full, ignore_errors=True)
 
 
@@ -520,7 +605,7 @@ def folder_upload():
         sid = _stamp() + "-" + uuid.uuid4().hex[:6]
         _clean_inputs(sid)
     root = os.path.join(INPUT_DIR, sid)
-    saved = 0
+    saved, failed = 0, []
     for f, rel in zip(files, rels):
         parts = _safe_parts(rel)
         if not parts or not parts[-1].lower().endswith(IMG_EXT):
@@ -528,9 +613,12 @@ def folder_upload():
         dst = os.path.join(root, *parts)
         if not _inside(dst, root):
             continue
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
-        f.save(dst)
-        saved += 1
+        try:
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            f.save(dst)
+            saved += 1
+        except OSError:
+            failed.append("/".join(parts))
     if not saved and not os.path.isdir(root):
         return jsonify(error="Thư mục không có ảnh (.png .jpg .jpeg .webp)"), 400
     os.makedirs(root, exist_ok=True)
@@ -544,13 +632,14 @@ def folder_upload():
     info["output"] = os.path.join(OUTPUT_DIR, info["name"] + "-" + sid.split("-", 2)[0] + "-" + sid.split("-", 2)[1])
     info["uploaded"] = True
     info["session"] = sid
+    info["failed"] = failed[:20]
     return jsonify(info)
 
 
 @app.post("/api/open")
 def open_folder():
-    p = (request.json or {}).get("path", "").strip().strip('"')
-    if not os.path.isdir(p):
+    p = _json_path()
+    if not p or not os.path.isdir(p):
         return jsonify(error="Thư mục không tồn tại"), 404
     if os.name == "nt":
         os.startfile(p)
