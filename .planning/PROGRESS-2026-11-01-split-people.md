@@ -15,3 +15,4 @@ Chủ nhân: sếp chê ảnh nhóm mất nét, cần "đi đủ nét từng nh�
 - [~] Test 50 ảnh (`workspace/split-tools/batch50.py`) — **dừng theo lệnh chủ nhân** sau ~2 ảnh/6 phút: VRAM đầy 11,9/12,2 GB (nghi ComfyUI PID 24236 giữ), máy đơ. Chưa có tỉ lệ %.
 - [ ] Tối ưu `person_parts` trước khi chạy lại test (bỏ điểm lưới đã nằm trong mảnh đã nhận).
 - [x] 01:30 Handoff mới: `.planning/HANDOFF-2026-11-01-0130.md`.
+- [x] 2026-11-01 Commit `cd4add6` + push origin/main (theo lệnh chủ nhân).
