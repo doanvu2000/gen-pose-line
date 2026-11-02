@@ -59,3 +59,12 @@ Chủ nhân: sếp chê ảnh nhóm mất nét, cần "đi đủ nét từng nh�
 - [x] `_drop_crumbs`: mảnh rời < 2% mảnh lớn nhất, không chứa keypoint → xoá (group_60/61).
 - Cache key `split17`. Soát 89 sheet (`workspace/review-sheets/`) bằng 5 agent; đa số báo là dính đồ vật sát người (bàn, ghế, bậu cửa, thảm picnic) — giới hạn của model tách nền, chưa xử lý. Còn: cafe_4 đĩa, book_28, poster hình người (friend_1, cafe_7), couple_1 cọc lan can.
 - Batch 529 chạy lại qua GUI.
+- Kết quả: 529/529, 0 lỗi, ~44 phút. Commit `4c34d38`.
+
+## Phiên 2026-11-02 (4) — nét trong rõ người
+- Thử siết `BODY_KEEP` 0.06 → 0.015 để bỏ đồ vật sát người (`workspace/props-compare.jpg`): chỉ đỡ vài ảnh (picnic_18 giỏ). Chủ nhân: đồ vật không quan trọng, ưu tiên nét đầu/tay/chân/thân → bỏ hướng này.
+- [x] `person_parts`: thêm SAM theo khung xương cho 2 chân (hông-gối-cổ chân) và đầu (mũi/mắt/tai, âm bản vai/hông); tay giữ như cũ. Cache key `split18`.
+- [x] Preset 2: nét trong `inner_width` 2 → 3, `inner_opacity` 0.6 → 0.9 (cả `workspace/batch-cfg.json`).
+- So sánh: `workspace/parts-test1.jpg`, `parts-test2.jpg` (script `split-tools/parts.py`, so code HEAD vs mới).
+- Lưu ý: chạy script thử song song app GPU dễ tràn VRAM 12 GB → chậm ~3 phút/ảnh; tắt app trước khi thử.
+- Batch 529 chạy lại qua GUI với code mới.

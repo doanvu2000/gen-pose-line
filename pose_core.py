@@ -104,7 +104,7 @@ _HEX = re.compile(r"^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 
 PRESETS = {
     "1. Dash viền ngoài": Style(source="photo", outline="dash", inner="none"),
-    "2. Dash ngoài + nét trong mảnh": Style(source="photo", outline="dash", inner="solid"),
+    "2. Dash ngoài + nét trong mảnh": Style(source="photo", outline="dash", inner="solid", inner_width=3.0, inner_opacity=0.9),
     "3. Chấm tròn + phủ mờ": Style(source="photo", outline="dots", width=5.0, gap=9.0, inner="none", fill=True),
     "4. Liền + glow + phủ mờ": Style(source="photo", outline="solid", width=3.5, inner="solid", inner_opacity=0.45, fill=True, fill_opacity=0.12, shadow_opacity=0.6, shadow_blur=5.0),
     "5. Restyle line-art: dash chính + liền phụ": Style(source="lineart", outline="dash", width=3.5, dash=14.0, gap=9.0, inner="solid", inner_width=2.0, inner_opacity=0.7),
@@ -1134,7 +1134,9 @@ def _drop_crumbs(full, people):
 
 PART_STEP, PART_IOU, PART_STABLE = 0.03, 0.75, 0.8
 _ARMS = [(5, 7, 9), (6, 8, 10)]
+_LEGS = [(11, 13, 15), (12, 14, 16)]
 _TORSO = [0, 11, 12]
+_HEAD = [0, 1, 2, 3, 4]
 
 
 def _limb_mask(sam, emb, k, sh, el, wr, region):
@@ -1144,8 +1146,9 @@ def _limb_mask(sam, emb, k, sh, el, wr, region):
     pos = [k[el, :2], k[wr, :2], (k[el, :2] + k[wr, :2]) / 2]
     if ok[sh]:
         pos.append(k[sh, :2] * 0.4 + k[el, :2] * 0.6)
-    other = sh + 1 if sh == 5 else sh - 1
-    neg = [k[i, :2] for i in _TORSO + [other] if ok[i]]
+    other = sh + 1 if sh in (5, 11) else sh - 1
+    # A leg's negatives are the shoulders, not the hips it hangs from.
+    neg = [k[i, :2] for i in ([0, 5, 6] if sh >= 11 else _TORSO) + [other] if ok[i]]
     pos, neg = np.array(pos), np.array(neg).reshape(-1, 2)
     # Torso keypoints right next to the arm would cut the elbow off; drop them.
     neg = neg[[np.linalg.norm(pos - q, axis=1).min() > 0.08 * region.shape[0] for q in neg]] if len(neg) else neg
@@ -1155,6 +1158,21 @@ def _limb_mask(sam, emb, k, sh, el, wr, region):
     h, w = region.shape
     m = (lg[:h, :w] > 0) & region
     if iou < 0.7 or m.sum() < 40 or m.sum() > 0.4 * region.sum():
+        return None
+    return m
+
+
+def _head_mask(sam, emb, k, region):
+    ok = k[:, 2] > KP_SCORE
+    pos = [k[i, :2] for i in _HEAD if ok[i]]
+    if len(pos) < 2:
+        return None
+    neg = [k[i, :2] for i in (5, 6, 11, 12) if ok[i]]
+    pts = np.concatenate([pos, np.array(neg).reshape(-1, 2), [[0, 0]]])
+    lg, iou = _sam_decode(sam, emb, pts, [1] * len(pos) + [0] * len(neg) + [-1], passes=2)
+    h, w = region.shape
+    m = (lg[:h, :w] > 0) & region
+    if iou < 0.7 or m.sum() < 40 or m.sum() > 0.3 * region.sum():
         return None
     return m
 
@@ -1202,10 +1220,14 @@ def person_parts(img: Image.Image, lab: np.ndarray, kps: np.ndarray) -> np.ndarr
             k = kps[v - 1].copy()
             k[:, 0] = (k[:, 0] - x0) * s
             k[:, 1] = (k[:, 1] - y0) * s
-            for j, (sh, el, wr) in enumerate(_ARMS):
-                arm = _limb_mask(sam, emb, k, sh, el, wr, region)
-                if arm is not None:
-                    local[arm] = 900 + j
+            # Legs under skirts and the head against same-coloured hair need the skeleton too, or the body reads as one blob.
+            for j, (a, b, c) in enumerate(_LEGS + _ARMS):
+                limb = _limb_mask(sam, emb, k, a, b, c, region)
+                if limb is not None:
+                    local[limb] = 900 + j
+            head = _head_mask(sam, emb, k, region)
+            if head is not None:
+                local[head] = 920
         local = cv2.resize(local.astype(np.float32), (x1 - x0, y1 - y0), interpolation=cv2.INTER_NEAREST).astype(np.int32)
         sub = seg[y0:y1, x0:x1]
         rf = region_full[y0:y1, x0:x1]
@@ -1218,7 +1240,7 @@ def person_parts(img: Image.Image, lab: np.ndarray, kps: np.ndarray) -> np.ndarr
 def _split_cached(img, body, soft=None):
     os.makedirs(CACHE_DIR, exist_ok=True)
     big = _providers()[0] != "CPUExecutionProvider"
-    key = hashlib.sha1(np.ascontiguousarray(body).tobytes() + img.convert("RGB").tobytes() + (b"" if soft is None else np.ascontiguousarray(soft).tobytes()) + (b"split17-L" if big else b"split17-B")).hexdigest()
+    key = hashlib.sha1(np.ascontiguousarray(body).tobytes() + img.convert("RGB").tobytes() + (b"" if soft is None else np.ascontiguousarray(soft).tobytes()) + (b"split18-L" if big else b"split18-B")).hexdigest()
     path = os.path.join(CACHE_DIR, key + ".split.npz")
     if os.path.exists(path):
         try:
