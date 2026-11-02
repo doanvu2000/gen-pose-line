@@ -691,7 +691,8 @@ def _face_detector():
 FACE_SCORE, FACE_MIN_RATIO, BLOB_MIN_RATIO = 0.6, 0.15, 0.2
 
 
-def count_faces(img: Image.Image) -> int:
+def face_boxes(img: Image.Image) -> np.ndarray:
+    """Foreground faces as rows (x, y, w, h) in image pixels."""
     im = img.convert("RGB")
     s = min(1.0, 960 / max(im.size))
     if s < 1:
@@ -702,26 +703,43 @@ def count_faces(img: Image.Image) -> int:
         det.setInputSize((bgr.shape[1], bgr.shape[0]))
         _, faces = det.detect(bgr)
     if faces is None:
-        return 0
+        return np.zeros((0, 4))
     faces = faces[faces[:, -1] >= FACE_SCORE]
     if not len(faces):
-        return 0
+        return np.zeros((0, 4))
     # Faces far smaller than the largest one are usually background passers-by.
     sizes = faces[:, 2] * faces[:, 3]
-    return int((sizes >= sizes.max() * FACE_MIN_RATIO).sum())
+    return faces[sizes >= sizes.max() * FACE_MIN_RATIO, :4] / s
 
 
-def count_blobs(img: Image.Image) -> int:
+def count_faces(img: Image.Image) -> int:
+    return len(face_boxes(img))
+
+
+COUNT_DET_SCORE, COUNT_DET_H = 0.4, 0.4
+
+
+def count_faceless(img: Image.Image) -> int:
+    """People in a photo with no visible face: separate cut-out regions, or YOLOX hits when friends touch.
+    0 when nobody is detected (pets, objects) so auto picks the general model."""
+    rgb = np.array(img.convert("RGB"))
     m = clean_mask(person_mask(img.convert("RGB"), GROUP_MODEL)).astype(np.uint8)
+    if not m.any():
+        return 0
+    b = _detect_zoomed(rgb, m.astype(bool))
+    b = b[b[:, 4] >= COUNT_DET_SCORE]
+    if not len(b):
+        return 0
+    h = b[:, 3] - b[:, 1]
     n, _, stats, _ = cv2.connectedComponentsWithStats(m, connectivity=8)
     areas = stats[1:, cv2.CC_STAT_AREA]
-    return int((areas >= areas.max() * BLOB_MIN_RATIO).sum()) if len(areas) else 0
+    return max(int((areas >= areas.max() * BLOB_MIN_RATIO).sum()), int((h >= COUNT_DET_H * h.max()).sum()))
 
 
 def count_people(img: Image.Image) -> int:
-    # Faces first; back views and tiny faces have none, so fall back to separate regions of the cut-out mask.
+    # Faces first; back views, upside-down and tiny faces have none.
     n = count_faces(img)
-    return n if n else count_blobs(img)
+    return n if n else count_faceless(img)
 
 
 def resolve_model(img: Image.Image, model: str, people: int = None):
@@ -818,36 +836,105 @@ def keypoints(rgb, box):
     return np.concatenate([pts, conf[:, None]], 1)
 
 
-KP_SCORE, PERSON_MIN_H, SAME_PERSON = 0.3, 0.3, 0.03
+KP_SCORE, PERSON_MIN_H, SAME_PERSON, OFFBODY_CONF, OFFBODY_SIZE = 0.3, 0.3, 0.03, 0.6, 0.6
+DET_SCORE, WEAK_SCORE, WEAK_KPS, WEAK_ONBODY = 0.3, 0.1, 12, 0.8
 
 
-def _people(rgb, body, min_people=2):
+def _detect_zoomed(rgb, body):
+    """YOLOX on the whole frame plus on the cut-out's bounding box: small seated people and drawn figures only
+    clear the threshold once zoomed in."""
+    boxes = detect_people(rgb, score=WEAK_SCORE, nms=0.6)
     H, W = body.shape
-    boxes = detect_people(rgb)
-    if len(boxes) < min_people:
+    ys, xs = np.nonzero(body)
+    if len(ys):
+        m = int(0.05 * H)
+        x0, y0, x1, y1 = max(0, xs.min() - m), max(0, ys.min() - m), min(W, xs.max() + m), min(H, ys.max() + m)
+        if (x1 - x0) * (y1 - y0) < 0.6 * W * H:
+            zb = detect_people(rgb[y0:y1, x0:x1], score=WEAK_SCORE, nms=0.6)
+            zb[:, [0, 2]] += x0
+            zb[:, [1, 3]] += y0
+            boxes = np.concatenate([boxes, zb])
+    if len(boxes) < 2:
+        return boxes
+    idx = np.array(cv2.dnn.NMSBoxes(np.concatenate([boxes[:, :2], boxes[:, 2:4] - boxes[:, :2]], 1).tolist(),
+                                    boxes[:, 4].tolist(), WEAK_SCORE, 0.6)).flatten()
+    return boxes[idx]
+
+
+def _face_person_box(f, W, H):
+    x, y, w, h = f
+    cx = x + w / 2
+    return np.array([max(0, cx - 2.5 * w), max(0, y - 0.6 * h), min(W, cx + 2.5 * w), min(H, y + 8 * h), 0.0])
+
+
+def _people(rgb, body, min_people=2, soft=None):
+    H, W = body.shape
+    # isnet leaves dark shirts and back-of-head half-transparent; they still count as on the cut-out here.
+    on = body if soft is None else body | (soft > SOFT_MIN)
+    boxes = _detect_zoomed(rgb, body)
+    faces = face_boxes(Image.fromarray(rgb))
+    strong = boxes[boxes[:, 4] >= DET_SCORE]
+    if max(len(strong), len(faces)) < min_people:
         return []
-    hmax = (boxes[:, 3] - boxes[:, 1]).max()
+    hmax = (strong[:, 3] - strong[:, 1]).max() if len(strong) else H
     people = []
-    for b in boxes[np.argsort(-boxes[:, 4])]:
-        if b[3] - b[1] < PERSON_MIN_H * hmax:
-            continue
-        k = keypoints(rgb, b)
+
+    def merge(qb, q, k, b):
+        # Same body, but its box cut the head off or the head scored too low; take the face-anchored joints.
+        better = k[:, 2] > q[:, 2]
+        q[better] = k[better]
+        qb[:2] = np.minimum(qb[:2], b[:2])
+        qb[2:4] = np.maximum(qb[2:4], b[2:4])
+
+    def add(b, k, face=False):
         good = k[:, 2] > KP_SCORE
         if good.sum() < 5:
-            continue
+            return False
         xs = np.clip(k[good, 0].astype(int), 0, W - 1)
         ys = np.clip(k[good, 1].astype(int), 0, H - 1)
-        # Balcony passers-by and false boxes land mostly off the cut-out.
-        if body[ys, xs].mean() < 0.5:
-            continue
-        dup = False
-        for _, q in people:
+        if not face and b[4] < DET_SCORE and (good.sum() < WEAK_KPS or on[ys, xs].mean() < WEAK_ONBODY):
+            return False
+        # Balcony passers-by and false boxes land mostly off the cut-out; a large confident detection is real even
+        # when isnet missed the person (lying on a picnic mat).
+        big = b[4] >= OFFBODY_CONF and max(b[2] - b[0], b[3] - b[1]) >= OFFBODY_SIZE * hmax
+        if on[ys, xs].mean() < 0.5 and not big:
+            return False
+        for qb, q in people:
             g = good & (q[:, 2] > KP_SCORE)
             if g.sum() >= 4 and np.median(np.linalg.norm(k[g, :2] - q[g, :2], axis=1)) < SAME_PERSON * H:
-                dup = True
-                break
-        if not dup:
-            people.append((b, k))
+                if face:
+                    merge(qb, q, k, b)
+                return False
+        people.append((b, k))
+        return True
+
+    for b in boxes[np.argsort(-boxes[:, 4])]:
+        if b[3] - b[1] >= PERSON_MIN_H * hmax:
+            add(b, keypoints(rgb, b))
+    # The detector misses people mostly hidden behind friends; a visible face still anchors them.
+    for f in faces:
+        x, y, w, h = f
+
+        def in_face(k):
+            return ((k[:5, 2] > KP_SCORE) & (k[:5, 0] >= x) & (k[:5, 0] <= x + w) & (k[:5, 1] >= y) & (k[:5, 1] <= y + h)).sum()
+
+        owner = next((p for p in people if in_face(p[1]) >= 2), None)
+        if owner is not None and owner[0][1] <= y:
+            continue
+        fb = _face_person_box(f, W, H)
+        k = keypoints(rgb, fb)
+        # Pose on a crowded crop can lock onto a neighbour; the head must sit on this face.
+        if in_face(k) < 2:
+            continue
+        k[~((k[:, 0] >= fb[0]) & (k[:, 0] <= fb[2]) & (k[:, 1] >= fb[1]) & (k[:, 1] <= fb[3])), 2] = 0
+        p = k[k[:, 2] > KP_SCORE, :2]
+        pad = 0.6 * w
+        # Box from the keypoints, not the guess, so SAM's box prompt doesn't swallow neighbours.
+        b = np.array([max(0, p[:, 0].min() - pad), max(0, min(y, p[:, 1].min()) - 0.3 * h), min(W, p[:, 0].max() + pad), min(H, p[:, 1].max() + pad), 0.0])
+        if owner is not None:
+            merge(owner[0], owner[1], k, b)
+        else:
+            add(b, k, face=True)
     return people
 
 
@@ -871,16 +958,16 @@ def _sam_decode(sam, emb, pts, labels, passes=1):
     return m[0, 0], float(iou[0, 0])
 
 
-BODY_GROW = 0.04
+BODY_GROW, BODY_KEEP, SOFT_MIN, SAM_TRUST, SAM_EXTRA = 0.04, 0.06, 25, 0.88, 0.6
 
 
-def person_labels(img: Image.Image, body: np.ndarray):
+def person_labels(img: Image.Image, body: np.ndarray, soft: np.ndarray = None):
     """Full-res label map (0 = background, label n+1 = people[n]) plus each person's keypoints; the cut-out is
     extended where SAM finds body parts isnet dropped."""
     from scipy.ndimage import distance_transform_edt
     rgb = np.array(img.convert("RGB"))
     H, W = body.shape
-    people = _people(rgb, body.astype(bool), min_people=1)
+    people = _people(rgb, body.astype(bool), min_people=1, soft=soft)
     if not people:
         return body.astype(np.uint8), np.zeros((0, 17, 3))
     sam = _aux_session("sam")
@@ -888,6 +975,9 @@ def person_labels(img: Image.Image, body: np.ndarray):
     sb = cv2.resize(body, (w, h), interpolation=cv2.INTER_NEAREST).astype(bool)
     # isnet drops dark hair against dark backgrounds; only accept SAM pixels hugging the existing cut-out.
     near = distance_transform_edt(~sb) <= BODY_GROW * h
+    if soft is not None:
+        # Pale dresses come out of isnet half-transparent and fall under clean_mask's cut; SAM may reclaim them.
+        near |= cv2.resize(soft, (w, h), interpolation=cv2.INTER_AREA) > SOFT_MIN
     own_pts = [k[k[:, 2] > KP_SCORE, :2] for _, k in people]
     # Feet lower in frame = closer to camera, so paint back to front and let the front person win overlaps.
     feet = [max([b[3]] + [y for _, y, c in k[15:17] if c > KP_SCORE]) for b, k in people]
@@ -901,11 +991,20 @@ def person_labels(img: Image.Image, body: np.ndarray):
         neg = np.array(neg).reshape(-1, 2)
         pts = np.concatenate([[b[:2], b[2:4]], own, neg, [[0, 0]]]) * s
         labels = np.concatenate([[2, 3], np.ones(len(own)), np.zeros(len(neg)), [-1]])
-        m, _ = _sam_decode(sam, emb, pts, labels, passes=2)
-        m = (m[:h, :w] > 0) & (sb | near)
+        m, iou = _sam_decode(sam, emb, pts, labels, passes=2)
         x0, y0, x1, y1 = [int(v * s) for v in (b[0] - margin, b[1] - margin, b[2] + margin, b[3] + margin)]
-        box = np.zeros_like(m)
+        box = np.zeros((h, w), bool)
         box[max(0, y0):y1, max(0, x0):x1] = True
+        m = m[:h, :w] > 0
+        inside = m & (sb | near)
+        extra = m & ~(sb | near) & box
+        kp = np.clip((own * s).astype(int), 0, [w - 1, h - 1])
+        missed = sb[kp[:, 1], kp[:, 0]].mean() < 0.5
+        # isnet sometimes drops whole skirt panels, or the whole person; trust a confident SAM mask to extend it.
+        if iou > SAM_TRUST and (missed or extra.sum() < SAM_EXTRA * inside.sum()):
+            m = inside | extra
+        else:
+            m = inside
         lab[m & box] = n + 1
     for v in range(1, len(people) + 1):
         cnt, cc, stats, _ = cv2.connectedComponentsWithStats((lab == v).astype(np.uint8), 8)
@@ -918,15 +1017,21 @@ def person_labels(img: Image.Image, body: np.ndarray):
             for i in range(1, cnt):
                 if areas[i - 1] < 0.15 * areas.max() and i not in anchored:
                     lab[cc == i] = 0
+    body = body.astype(bool)
+    if lab.any():
+        d, (iy, ix) = distance_transform_edt(lab == 0, return_indices=True)
+        # Swings, railings and props isnet fuses onto people sit far from every person SAM found.
+        far = sb & (d > BODY_KEEP * h)
+        sb &= ~far
+        body = body & ~(cv2.resize(far.astype(np.uint8), (W, H), interpolation=cv2.INTER_NEAREST) > 0)
     ext = sb | (lab > 0)
     if lab.any():
-        _, (iy, ix) = distance_transform_edt(lab == 0, return_indices=True)
         lab = lab[iy, ix]
     lab[~ext] = 0
     full = cv2.resize(cv2.medianBlur(lab, 7), (W, H), interpolation=cv2.INTER_NEAREST)
     grow = cv2.resize(ext.astype(np.uint8), (W, H), interpolation=cv2.INTER_LINEAR) > 0
-    full[~(body.astype(bool) | grow)] = 0
-    holes = (body > 0) & (full == 0)
+    full[~(body | grow)] = 0
+    holes = body & (full == 0)
     if holes.any() and full.any():
         _, (iy, ix) = distance_transform_edt(full == 0, return_indices=True)
         full[holes] = full[iy, ix][holes]
@@ -1016,10 +1121,10 @@ def person_parts(img: Image.Image, lab: np.ndarray, kps: np.ndarray) -> np.ndarr
     return seg
 
 
-def _split_cached(img, body):
+def _split_cached(img, body, soft=None):
     os.makedirs(CACHE_DIR, exist_ok=True)
     big = _providers()[0] != "CPUExecutionProvider"
-    key = hashlib.sha1(np.ascontiguousarray(body).tobytes() + img.convert("RGB").tobytes() + (b"split3-L" if big else b"split3-B")).hexdigest()
+    key = hashlib.sha1(np.ascontiguousarray(body).tobytes() + img.convert("RGB").tobytes() + (b"" if soft is None else np.ascontiguousarray(soft).tobytes()) + (b"split11-L" if big else b"split11-B")).hexdigest()
     path = os.path.join(CACHE_DIR, key + ".split.npz")
     if os.path.exists(path):
         try:
@@ -1027,7 +1132,7 @@ def _split_cached(img, body):
                 return z["lab"], z["seg"]
         except Exception:
             pass
-    lab, kps = person_labels(img, body)
+    lab, kps = person_labels(img, body, soft)
     seg = person_parts(img, lab, kps)
     tmp = f"{path}.{os.getpid()}.part.npz"
     np.savez_compressed(tmp, lab=lab, seg=seg)
@@ -1057,7 +1162,7 @@ def render_photo(img: Image.Image, st: Style, mask: np.ndarray = None) -> Image.
     body = clean_mask(mask)
     lab = seg = None
     if st.split:
-        lab, seg = _split_cached(img, body)
+        lab, seg = _split_cached(img, body, mask)
         body = (lab > 0).astype(np.uint8)
     outer = outline_paths(body, st, unit) if st.outline != "none" else []
     a = _draw((W, H), outer, st.outline, st.width * unit, st.dash * unit, st.gap * unit) * st.opacity
