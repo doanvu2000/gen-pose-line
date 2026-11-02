@@ -1035,7 +1035,41 @@ def person_labels(img: Image.Image, body: np.ndarray, soft: np.ndarray = None):
     if holes.any() and full.any():
         _, (iy, ix) = distance_transform_edt(full == 0, return_indices=True)
         full[holes] = full[iy, ix][holes]
+    _drop_spurs(full, people)
     return full, np.stack([k for _, k in people])
+
+
+SPUR_WIDTH, SPUR_LEN = 0.03, 0.08
+
+
+def _drop_spurs(full, people):
+    """Chair legs and poles isnet fuses onto seated people survive as thin tails; thin ankles and wrists of small
+    people hold a keypoint, tails don't."""
+    ph = float(np.median([b[3] - b[1] for b, _ in people]))
+    k = max(3, int(SPUR_WIDTH * ph)) | 1
+    fb = (full > 0).astype(np.uint8)
+    thin = fb & ~cv2.morphologyEx(fb, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+    n, cc, stats, _ = cv2.connectedComponentsWithStats(thin, 8)
+    if n < 2:
+        return
+    H, W = full.shape
+    kp = np.concatenate([q[q[:, 2] > KP_SCORE, :2] for _, q in people]).astype(int)
+    kp = kp[(kp[:, 0] >= 0) & (kp[:, 0] < W) & (kp[:, 1] >= 0) & (kp[:, 1] < H)]
+    near = np.zeros_like(fb)
+    near[kp[:, 1], kp[:, 0]] = 1
+    near = cv2.dilate(near, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * k + 1,) * 2))
+    anchored = set(cc[near > 0].tolist())
+    cut = False
+    for i in range(1, n):
+        if i not in anchored and max(stats[i, cv2.CC_STAT_WIDTH], stats[i, cv2.CC_STAT_HEIGHT]) >= SPUR_LEN * ph:
+            full[cc == i] = 0
+            cut = True
+    if cut:
+        # The cut leaves the tail's foot (chair foot) as a loose crumb.
+        n, cc, stats, _ = cv2.connectedComponentsWithStats((full > 0).astype(np.uint8), 8)
+        areas = stats[1:, cv2.CC_STAT_AREA]
+        for i in np.nonzero(areas < 0.01 * areas.max())[0]:
+            full[cc == i + 1] = 0
 
 
 PART_STEP, PART_IOU, PART_STABLE = 0.03, 0.75, 0.8
@@ -1124,7 +1158,7 @@ def person_parts(img: Image.Image, lab: np.ndarray, kps: np.ndarray) -> np.ndarr
 def _split_cached(img, body, soft=None):
     os.makedirs(CACHE_DIR, exist_ok=True)
     big = _providers()[0] != "CPUExecutionProvider"
-    key = hashlib.sha1(np.ascontiguousarray(body).tobytes() + img.convert("RGB").tobytes() + (b"" if soft is None else np.ascontiguousarray(soft).tobytes()) + (b"split11-L" if big else b"split11-B")).hexdigest()
+    key = hashlib.sha1(np.ascontiguousarray(body).tobytes() + img.convert("RGB").tobytes() + (b"" if soft is None else np.ascontiguousarray(soft).tobytes()) + (b"split13-L" if big else b"split13-B")).hexdigest()
     path = os.path.join(CACHE_DIR, key + ".split.npz")
     if os.path.exists(path):
         try:

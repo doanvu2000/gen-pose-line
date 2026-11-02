@@ -43,3 +43,9 @@ Chủ nhân: sếp chê ảnh nhóm mất nét, cần "đi đủ nét từng nh�
 - Kết quả: group_19 tách được cô quay lưng (cô áo xanh lá ngả lưng vẫn gộp với bạn — không detector nào bắt); picnic_15 đủ 3 người; group_58 → isnet. fun_18 (người + bóng hình trái tim) giữ nguyên, coi là giới hạn.
 - Render lại 24 ảnh (13 ảnh đổi + 11 ảnh test hồi quy): `workspace/sheets-fix/`, PNG ghi đè ở `output/Pose-2026-11-01/`. Chậm 6–15 phút/ảnh do PID 24236 (ComfyUI) giữ VRAM.
 - Các ảnh còn lại trong batch 529 chưa render lại với code mới (khác biệt chỉ ở ảnh YOLOX bỏ sót người).
+
+## Phiên 2026-11-02 (2) — vệt đồ vật + chạy lại batch
+- [x] `_drop_spurs` (cuối `person_labels`): cắt đuôi mảnh (chân ghế, cột) dài ≥ 8% chiều cao người, rộng < 3%, không chứa keypoint; xoá mảnh vụn < 1% sau khi cắt. picnic_15 hết vệt chân ghế; group_58/group_1 không đổi.
+- Cache key `split13`.
+- group_19 (cô ngả lưng, tranh vẽ): YOLOX/YuNet không bắt cả khi xoay 90/180 → giới hạn. fun_18 (người + bóng hình trái tim) → giới hạn.
+- Batch 529 ảnh chạy lại qua GUI (`/api/batch/start`, skip_existing=false, model auto, preset 2) → `output/Pose-2026-11-01/`.
