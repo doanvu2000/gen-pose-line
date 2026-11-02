@@ -116,7 +116,7 @@ def _session(model):
     with _session_lock:
         if model not in _sessions:
             from rembg import new_session
-            _sessions[model] = new_session(model, providers=_providers())
+            _sessions[model] = new_session(model, providers=_session_providers())
         return _sessions[model]
 
 
@@ -140,6 +140,15 @@ def _providers(want=None):
         order.append("CoreMLExecutionProvider")
     order.append("CPUExecutionProvider")
     return order
+
+
+# Default arena doubles on every grow and never shrinks; with isnet, u2net, SAM-L and pose loaded at once a long
+# batch spills past 12 GB VRAM into shared memory and slows to minutes per image.
+_CUDA_OPTS = {"arena_extend_strategy": "kSameAsRequested", "cudnn_conv_algo_search": "HEURISTIC"}
+
+
+def _session_providers(want=None):
+    return [(p, _CUDA_OPTS) if p == "CUDAExecutionProvider" else p for p in _providers(want)]
 
 
 def set_device(want):
@@ -271,7 +280,7 @@ def benchmark(want, model="isnet-general-use", runs=3):
     ImageDraw.Draw(img).ellipse((250, 150, 520, 900), fill=(60, 50, 45))
     t = time.time()
     try:
-        sess = new_session(model, providers=_providers(want))
+        sess = new_session(model, providers=_session_providers(want))
         remove(img, session=sess, only_mask=True)
         first = time.time() - t
         times = []
@@ -777,13 +786,13 @@ def _aux_session(key):
                 big = _providers()[0] != "CPUExecutionProvider"
                 enc, dec = SamSession.download_models(sam_model="sam_vit_l_0b3195" if big else "sam_vit_b_01ec64")
                 # rembg's SamSession ignores providers and would run on CPU even with CUDA available.
-                _aux[key] = SimpleNamespace(encoder=ort.InferenceSession(str(enc), providers=_providers()),
-                                            decoder=ort.InferenceSession(str(dec), providers=_providers()))
+                _aux[key] = SimpleNamespace(encoder=ort.InferenceSession(str(enc), providers=_session_providers()),
+                                            decoder=ort.InferenceSession(str(dec), providers=_session_providers()))
             else:
                 path, url, member = (DET_MODEL, DET_URL, None) if key == "det" else (POSE_MODEL, POSE_URL, "end2end.onnx")
                 if not os.path.exists(path):
                     _download(url, path, member)
-                _aux[key] = ort.InferenceSession(path, providers=_providers())
+                _aux[key] = ort.InferenceSession(path, providers=_session_providers())
         return _aux[key]
 
 

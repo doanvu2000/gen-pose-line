@@ -49,3 +49,5 @@ Chủ nhân: sếp chê ảnh nhóm mất nét, cần "đi đủ nét từng nh�
 - Cache key `split13`.
 - group_19 (cô ngả lưng, tranh vẽ): YOLOX/YuNet không bắt cả khi xoay 90/180 → giới hạn. fun_18 (người + bóng hình trái tim) → giới hạn.
 - Batch 529 ảnh chạy lại qua GUI (`/api/batch/start`, skip_existing=false, model auto, preset 2) → `output/Pose-2026-11-01/`.
+- [x] Batch chậm dần (~4 phút/ảnh) do VRAM tràn: ComfyUI + arena ORT nhân đôi không trả. Tắt ComfyUI; `_session_providers` đặt `arena_extend_strategy=kSameAsRequested`, `cudnn_conv_algo_search=HEURISTIC` cho mọi session CUDA → ~4–14 s/ảnh, VRAM ổn định ~10,9 GB.
+- [x] Batch 529/529 xong, 0 lỗi (106 ảnh lượt đầu + 423 lượt sau). PNG cũ chưa chạy lại đã chuyển sang `output/_old-Pose-2026-11-01/` (có thể xoá).
