@@ -51,3 +51,11 @@ Chủ nhân: sếp chê ảnh nhóm mất nét, cần "đi đủ nét từng nh�
 - Batch 529 ảnh chạy lại qua GUI (`/api/batch/start`, skip_existing=false, model auto, preset 2) → `output/Pose-2026-11-01/`.
 - [x] Batch chậm dần (~4 phút/ảnh) do VRAM tràn: ComfyUI + arena ORT nhân đôi không trả. Tắt ComfyUI; `_session_providers` đặt `arena_extend_strategy=kSameAsRequested`, `cudnn_conv_algo_search=HEURISTIC` cho mọi session CUDA → ~4–14 s/ảnh, VRAM ổn định ~10,9 GB.
 - [x] Batch 529/529 xong, 0 lỗi (106 ảnh lượt đầu + 423 lượt sau). PNG cũ chưa chạy lại đã chuyển sang `output/_old-Pose-2026-11-01/` (có thể xoá).
+
+## Phiên 2026-11-02 (3) — soát 529 ảnh, sửa lỗi nặng
+- [x] Giữ bàn tay giơ cao: blob "far" cỡ bàn tay (≤ 0.2 người) trong tầm 0.2 người quanh khuỷu/cổ tay không bị coi là đồ vật; `_drop_spurs` neo ngón tay theo cổ tay/khuỷu (group_2 chữ V, couple_4).
+- [x] `subject_mask`: model chọn ra mask < 1% → đổi u2net_human_seg ↔ isnet (group_26 tranh vẽ trống viền, group_37 chân chụp từ trên).
+- [x] Ảnh 1 người: blob far ≥ 30% diện tích label giữ lại (box YOLOX cắt ngang váy xoè, fun_1 mất chân).
+- [x] `_drop_crumbs`: mảnh rời < 2% mảnh lớn nhất, không chứa keypoint → xoá (group_60/61).
+- Cache key `split17`. Soát 89 sheet (`workspace/review-sheets/`) bằng 5 agent; đa số báo là dính đồ vật sát người (bàn, ghế, bậu cửa, thảm picnic) — giới hạn của model tách nền, chưa xử lý. Còn: cafe_4 đĩa, book_28, poster hình người (friend_1, cafe_7), couple_1 cọc lan can.
+- Batch 529 chạy lại qua GUI.

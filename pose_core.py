@@ -314,6 +314,21 @@ def person_mask(img: Image.Image, model: str) -> np.ndarray:
     return m
 
 
+EMPTY_MASK = 0.01
+
+
+def subject_mask(img: Image.Image, model: str) -> np.ndarray:
+    """person_mask, but swaps the solo/group model when the pick finds nothing: u2net_human_seg is blank on drawn
+    figures, isnet on legs-only top-down shots."""
+    m = person_mask(img, model)
+    alt = {SOLO_MODEL: GROUP_MODEL, GROUP_MODEL: SOLO_MODEL}.get(model)
+    if alt and (m > 127).mean() < EMPTY_MASK:
+        a = person_mask(img, alt)
+        if (a > 127).mean() > (m > 127).mean():
+            return a
+    return m
+
+
 def clean_mask(m: np.ndarray) -> np.ndarray:
     h, w = m.shape
     b = (cv2.GaussianBlur(m, (0, 0), max(1.0, h / 600)) > 127).astype(np.uint8)
@@ -968,6 +983,7 @@ def _sam_decode(sam, emb, pts, labels, passes=1):
 
 
 BODY_GROW, BODY_KEEP, SOFT_MIN, SAM_TRUST, SAM_EXTRA = 0.04, 0.06, 25, 0.88, 0.6
+HAND_REACH, HAND_MAX, SOLO_KEEP = 0.2, 0.2, 0.3
 
 
 def person_labels(img: Image.Image, body: np.ndarray, soft: np.ndarray = None):
@@ -1031,6 +1047,25 @@ def person_labels(img: Image.Image, body: np.ndarray, soft: np.ndarray = None):
         d, (iy, ix) = distance_transform_edt(lab == 0, return_indices=True)
         # Swings, railings and props isnet fuses onto people sit far from every person SAM found.
         far = sb & (d > BODY_KEEP * h)
+        if len(people) == 1 and far.any():
+            # Alone in frame, a blob this big is legs the detector box cut off (flared skirts), not a prop.
+            n, cc, stats, _ = cv2.connectedComponentsWithStats(far.astype(np.uint8), 8)
+            big = np.nonzero(stats[1:, cv2.CC_STAT_AREA] >= SOLO_KEEP * (lab > 0).sum())[0] + 1
+            if len(big):
+                far &= ~np.isin(cc, big)
+        # SAM often stops at the wrist of a raised arm and pose loses the wrist when the box cuts the arm off; a
+        # hand-sized blob within a forearm of an elbow or wrist is the hand, not a prop.
+        arm = np.concatenate([k[7:11][k[7:11, 2] > KP_SCORE, :2] for _, k in people]) * s
+        if len(arm) and far.any():
+            ph = float(np.median([b[3] - b[1] for b, _ in people])) * s
+            n, cc, stats, _ = cv2.connectedComponentsWithStats(far.astype(np.uint8), 8)
+            reach = np.zeros((h, w), np.uint8)
+            for x, y in arm.astype(int):
+                cv2.circle(reach, (int(x), int(y)), int(HAND_REACH * ph), 1, -1)
+            touched = np.setdiff1d(np.unique(cc[reach > 0]), [0])
+            hand = [i for i in touched if max(stats[i, cv2.CC_STAT_WIDTH], stats[i, cv2.CC_STAT_HEIGHT]) <= HAND_MAX * ph]
+            if hand:
+                far &= ~np.isin(cc, hand)
         sb &= ~far
         body = body & ~(cv2.resize(far.astype(np.uint8), (W, H), interpolation=cv2.INTER_NEAREST) > 0)
     ext = sb | (lab > 0)
@@ -1045,10 +1080,11 @@ def person_labels(img: Image.Image, body: np.ndarray, soft: np.ndarray = None):
         _, (iy, ix) = distance_transform_edt(full == 0, return_indices=True)
         full[holes] = full[iy, ix][holes]
     _drop_spurs(full, people)
+    _drop_crumbs(full, people)
     return full, np.stack([k for _, k in people])
 
 
-SPUR_WIDTH, SPUR_LEN = 0.03, 0.08
+SPUR_WIDTH, SPUR_LEN, HAND_LEN = 0.03, 0.08, 0.12
 
 
 def _drop_spurs(full, people):
@@ -1067,17 +1103,32 @@ def _drop_spurs(full, people):
     near = np.zeros_like(fb)
     near[kp[:, 1], kp[:, 0]] = 1
     near = cv2.dilate(near, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * k + 1,) * 2))
+    # Spread fingers (V sign, waving) sit a palm past the wrist, a forearm past the elbow when the wrist is lost.
+    for _, q in people:
+        for j, (x, y, c) in enumerate(q[7:11]):
+            if c > KP_SCORE:
+                cv2.circle(near, (int(x), int(y)), int((HAND_REACH if j < 2 else HAND_LEN) * ph), 1, -1)
     anchored = set(cc[near > 0].tolist())
-    cut = False
     for i in range(1, n):
         if i not in anchored and max(stats[i, cv2.CC_STAT_WIDTH], stats[i, cv2.CC_STAT_HEIGHT]) >= SPUR_LEN * ph:
             full[cc == i] = 0
-            cut = True
-    if cut:
-        # The cut leaves the tail's foot (chair foot) as a loose crumb.
-        n, cc, stats, _ = cv2.connectedComponentsWithStats((full > 0).astype(np.uint8), 8)
-        areas = stats[1:, cv2.CC_STAT_AREA]
-        for i in np.nonzero(areas < 0.01 * areas.max())[0]:
+
+
+CRUMB = 0.02
+
+
+def _drop_crumbs(full, people):
+    """Loose bits of grass, plates and cut-off chair feet; a detached hand or head still holds a keypoint."""
+    n, cc, stats, _ = cv2.connectedComponentsWithStats((full > 0).astype(np.uint8), 8)
+    if n < 3:
+        return
+    H, W = full.shape
+    kp = np.concatenate([q[q[:, 2] > KP_SCORE, :2] for _, q in people]).astype(int)
+    kp = kp[(kp[:, 0] >= 0) & (kp[:, 0] < W) & (kp[:, 1] >= 0) & (kp[:, 1] < H)]
+    anchored = set(cc[kp[:, 1], kp[:, 0]].tolist())
+    areas = stats[1:, cv2.CC_STAT_AREA]
+    for i in np.nonzero(areas < CRUMB * areas.max())[0]:
+        if i + 1 not in anchored:
             full[cc == i + 1] = 0
 
 
@@ -1167,7 +1218,7 @@ def person_parts(img: Image.Image, lab: np.ndarray, kps: np.ndarray) -> np.ndarr
 def _split_cached(img, body, soft=None):
     os.makedirs(CACHE_DIR, exist_ok=True)
     big = _providers()[0] != "CPUExecutionProvider"
-    key = hashlib.sha1(np.ascontiguousarray(body).tobytes() + img.convert("RGB").tobytes() + (b"" if soft is None else np.ascontiguousarray(soft).tobytes()) + (b"split13-L" if big else b"split13-B")).hexdigest()
+    key = hashlib.sha1(np.ascontiguousarray(body).tobytes() + img.convert("RGB").tobytes() + (b"" if soft is None else np.ascontiguousarray(soft).tobytes()) + (b"split17-L" if big else b"split17-B")).hexdigest()
     path = os.path.join(CACHE_DIR, key + ".split.npz")
     if os.path.exists(path):
         try:
@@ -1201,7 +1252,7 @@ def render_photo(img: Image.Image, st: Style, mask: np.ndarray = None) -> Image.
     W, H = img.size
     unit = H / 1000.0
     if mask is None:
-        mask = person_mask(img, resolve_model(img, st.model)[0])
+        mask = subject_mask(img, resolve_model(img, st.model)[0])
     body = clean_mask(mask)
     lab = seg = None
     if st.split:
