@@ -68,3 +68,20 @@ Chủ nhân: sếp chê ảnh nhóm mất nét, cần "đi đủ nét từng nh�
 - So sánh: `workspace/parts-test1.jpg`, `parts-test2.jpg` (script `split-tools/parts.py`, so code HEAD vs mới).
 - Lưu ý: chạy script thử song song app GPU dễ tràn VRAM 12 GB → chậm ~3 phút/ảnh; tắt app trước khi thử.
 - Batch 529 chạy lại qua GUI với code mới.
+
+## Phiên 2026-11-02 (5) — sếp báo group fail (21 ảnh `Downloads/Group_Fail.zip`) + data Photobooth
+- Input: `workspace/group-fail-in/Group_Fail/` (trùng md5 với `pose-input/Pose/Group`, riêng `group_8.png` là ảnh output lỗi sếp chụp lại).
+- Nguyên nhân chung: isnet bắt đủ người, nhưng YOLOX/YuNet chỉ thấy 2–3 người (tranh vẽ, xếp chồng, lộn ngược) → vùng mask cách người đã nhận > `BODY_KEEP` bị xoá như đồ vật → mất cả người (group_40, 35, 4, 44) hoặc tay chân vượt box SAM (group_31, 43).
+- [x] `_recover_far` (chỉ khi ≥ 2 người): vùng xa mảnh (lõi sau opening < `FAR_CORE`) mới bỏ; vùng dày giữ lại (gán người gần nhất); vùng ≥ `FAR_PERSON` × diện tích người → YOLOX zoom vào crop (`_far_seeds`) + SAM thành người mới, phần còn dư cũng thành người.
+- [x] `_rotated_pose`: mặt YuNet thấy nhưng pose thẳng đứng hỏng → thử pose trên ảnh xoay 180/90/270 (group_8 cô tóc vàng lộn ngược).
+- Cache key `split22`. `workspace/split-tools/one.py` dùng `subject_mask`; `batch_all.py` nhận env `ROOT`/`OUT`.
+- Kết quả 21 ảnh: `workspace/sheets-groupfail/`, PNG ghi đè `output/Pose-2026-11-01/Group/`. So sánh trước/sau: `workspace/compare-groupfail/` (+ `.zip`).
+- [x] group_37 (chỉ chân, chụp từ trên): isnet + u2net_human_seg không thấy 2 cặp chân hai bên → `subject_mask` khi mask rỗng thử thêm `birefnet-portrait` (`FALLBACK_MODEL`), lấy mask phủ nhiều nhất < `FULL_MASK`. group_26 không đổi.
+- Photobooth 109 ảnh (`1 mình` 40, `Bạn thân` 36, `Cặp đôi` 33): input `workspace/photobooth-in/Photobooth/`, output `output/Photobooth-2026-11-02/`, sheet `workspace/sheets-photobooth/`.
+- [x] Batch Photobooth chậm dần tới ~250 s/ảnh: VRAM 11,7/12,2 GB do arena SAM-L giữ activations → `_sam_embed` chạy với RunOptions `memory.enable_memory_arena_shrinkage=gpu:0` (chỉ CUDA). VRAM ~4–6 GB, 5–15 s/ảnh. `batch_all.py` thêm env `SKIP=1` bỏ ảnh đã có PNG.
+- Soát 109 ảnh Photobooth (`workspace/review-photobooth/g*.jpg`, `index.txt`): đủ người, tách tốt. Lỗi lặp: logo watermark "✦" góc dưới thành hình thoi trên áo; #84 ảnh có viền trắng in quanh → vẽ khung chữ nhật.
+- [x] `_frame_pad` + `render_photo`: viền đồng màu kết thúc bằng bước nhảy màu (`PAD_*`) → render trên phần trong rồi dán lại. Khớp 10/638 ảnh (đều là viền thật).
+- [x] `_merge_specks` trong `person_parts`: mảnh nét trong < `PART_MIN` 0,6% diện tích người gộp vào mảnh bao quanh (watermark, nút áo, con ngươi lẻ).
+- Cache key `split24`. Chạy lại 109 Photobooth + 21 group fail. 529 ảnh Pose còn lại chưa render lại với code mới.
+- [x] `PART_MIN` 0,3% → 0,6% (watermark #89 = 825 px, sát ngưỡng cũ). Cache `split24`. Chạy lại 109 Photobooth + 21 group fail: 130/130, 0 lỗi; hết hình thoi watermark, hết khung #84. Grid soát `workspace/review-photobooth/`, so sánh `workspace/compare-groupfail(.zip)`.
+- [ ] Chủ nhân/sếp duyệt → đề xuất commit `pose_core.py` (dừng trước `git`). 529 ảnh Pose còn lại chưa render lại.

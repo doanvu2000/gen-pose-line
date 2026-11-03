@@ -314,7 +314,7 @@ def person_mask(img: Image.Image, model: str) -> np.ndarray:
     return m
 
 
-EMPTY_MASK = 0.01
+EMPTY_MASK, FULL_MASK, FALLBACK_MODEL = 0.01, 0.9, "birefnet-portrait"
 
 
 def subject_mask(img: Image.Image, model: str) -> np.ndarray:
@@ -323,9 +323,11 @@ def subject_mask(img: Image.Image, model: str) -> np.ndarray:
     m = person_mask(img, model)
     alt = {SOLO_MODEL: GROUP_MODEL, GROUP_MODEL: SOLO_MODEL}.get(model)
     if alt and (m > 127).mean() < EMPTY_MASK:
-        a = person_mask(img, alt)
-        if (a > 127).mean() > (m > 127).mean():
-            return a
+        # u2net_human_seg only sees the front pair in a top-down ring of feet; birefnet gets the side pairs too.
+        for name in (alt, FALLBACK_MODEL):
+            a = person_mask(img, name)
+            if (m > 127).mean() < (a > 127).mean() < FULL_MASK:
+                m = a
     return m
 
 
@@ -891,6 +893,33 @@ def _face_person_box(f, W, H):
     return np.array([max(0, cx - 2.5 * w), max(0, y - 0.6 * h), min(W, cx + 2.5 * w), min(H, y + 8 * h), 0.0])
 
 
+def _rot_pts(p, r, W, H):
+    """Map (x, y) rows from an image of size W x H into np.rot90(image, r)."""
+    x, y = p[:, 0], p[:, 1]
+    q = [(x, y), (y, W - 1 - x), (W - 1 - x, H - 1 - y), (H - 1 - y, x)][r % 4]
+    return np.stack(q, 1)
+
+
+def _rotated_pose(rgb, f):
+    H, W = rgb.shape[:2]
+    x, y, w, h = f
+    corners = np.array([[x, y], [x + w, y + h]], float)
+    for r in (2, 1, 3):
+        rr = np.ascontiguousarray(np.rot90(rgb, r))
+        Hr, Wr = rr.shape[:2]
+        c = _rot_pts(corners, r, W, H)
+        (fx0, fy0), (fx1, fy1) = c.min(0), c.max(0)
+        k = keypoints(rr, _face_person_box((fx0, fy0, fx1 - fx0, fy1 - fy0), Wr, Hr))
+        hit = (k[:5, 2] > KP_SCORE) & (k[:5, 0] >= fx0) & (k[:5, 0] <= fx1) & (k[:5, 1] >= fy0) & (k[:5, 1] <= fy1)
+        if hit.sum() < 2:
+            continue
+        # Rotating by r and then by 4 - r is the identity.
+        k[:, :2] = _rot_pts(k[:, :2], 4 - r, Wr, Hr)
+        p = k[k[:, 2] > KP_SCORE, :2]
+        return k, np.array([max(0, p[:, 0].min() - w), max(0, p[:, 1].min() - h), min(W, p[:, 0].max() + w), min(H, p[:, 1].max() + h), 0.0])
+    return None, None
+
+
 def _people(rgb, body, min_people=2, soft=None):
     H, W = body.shape
     # isnet leaves dark shirts and back-of-head half-transparent; they still count as on the cut-out here.
@@ -949,7 +978,10 @@ def _people(rgb, body, min_people=2, soft=None):
         k = keypoints(rgb, fb)
         # Pose on a crowded crop can lock onto a neighbour; the head must sit on this face.
         if in_face(k) < 2:
-            continue
+            # Shot-from-below circles and lying poses have sideways or upside-down heads.
+            k, fb = _rotated_pose(rgb, f)
+            if k is None or in_face(k) < 2:
+                continue
         k[~((k[:, 0] >= fb[0]) & (k[:, 0] <= fb[2]) & (k[:, 1] >= fb[1]) & (k[:, 1] <= fb[3])), 2] = 0
         p = k[k[:, 2] > KP_SCORE, :2]
         pad = 0.6 * w
@@ -968,7 +1000,23 @@ def _sam_embed(sam, rgb):
     w, h = round(w0 * s), round(h0 * s)
     pad = np.zeros((684, 1024, 3), np.float32)
     pad[:h, :w] = cv2.resize(rgb, (w, h), interpolation=cv2.INTER_AREA if s < 1 else cv2.INTER_CUBIC)
-    return sam.encoder.run(None, {sam.encoder.get_inputs()[0].name: pad})[0], s, w, h
+    return sam.encoder.run(None, {sam.encoder.get_inputs()[0].name: pad}, _shrink_opts())[0], s, w, h
+
+
+def _shrink_opts():
+    # SAM-L activations are GBs; without shrinking, the arena keeps them and the rest of the batch spills out of VRAM.
+    import onnxruntime as ort
+    want = os.environ.get("POSE_TOOL_DEVICE", "auto")
+    if want not in _shrink:
+        ro = None
+        if _providers()[0] == "CUDAExecutionProvider":
+            ro = ort.RunOptions()
+            ro.add_run_config_entry("memory.enable_memory_arena_shrinkage", "gpu:0")
+        _shrink[want] = ro
+    return _shrink[want]
+
+
+_shrink = {}
 
 
 def _sam_decode(sam, emb, pts, labels, passes=1):
@@ -1066,6 +1114,10 @@ def person_labels(img: Image.Image, body: np.ndarray, soft: np.ndarray = None):
             hand = [i for i in touched if max(stats[i, cv2.CC_STAT_WIDTH], stats[i, cv2.CC_STAT_HEIGHT]) <= HAND_MAX * ph]
             if hand:
                 far &= ~np.isin(cc, hand)
+        # Solo shots already pass review with the plain prop cut; only groups lose whole people to it.
+        if far.any() and len(people) >= 2:
+            far = _recover_far(far, lab, people, sam, emb, s, rgb, sb | near)
+            d, (iy, ix) = distance_transform_edt(lab == 0, return_indices=True)
         sb &= ~far
         body = body & ~(cv2.resize(far.astype(np.uint8), (W, H), interpolation=cv2.INTER_NEAREST) > 0)
     ext = sb | (lab > 0)
@@ -1082,6 +1134,87 @@ def person_labels(img: Image.Image, body: np.ndarray, soft: np.ndarray = None):
     _drop_spurs(full, people)
     _drop_crumbs(full, people)
     return full, np.stack([k for _, k in people])
+
+
+FAR_CORE, FAR_PERSON = 0.02, 0.2
+
+
+def _recover_far(far, lab, people, sam, emb, s, rgb, allowed):
+    """Cut-out regions far from every detected person: thin ones are props, thick ones are limbs past the SAM box
+    or whole people YOLOX/YuNet missed (drawings, stacked poses). Returns the far mask left to drop; mutates lab and
+    people when a missed person gets its own label."""
+    h, w = lab.shape
+    ph = float(np.median([b[3] - b[1] for b, _ in people])) * s
+    areas = np.bincount(lab.ravel(), minlength=len(people) + 1)[1:]
+    pa = float(np.median(areas[areas > 0])) if (areas > 0).any() else float(lab.size)
+    k = max(3, int(SPUR_WIDTH * ph)) | 1
+    n, cc, stats, _ = cv2.connectedComponentsWithStats(far.astype(np.uint8), 8)
+    drop = np.zeros_like(far)
+    for i in range(1, n):
+        comp = cc == i
+        core = cv2.morphologyEx(comp.astype(np.uint8), cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))) > 0
+        if core.sum() < FAR_CORE * pa:
+            drop |= comp
+            continue
+        if comp.sum() < FAR_PERSON * pa or len(people) >= 254:
+            continue
+        x, y, bw, bh = stats[i, :4]
+        seeds = _far_seeds(rgb, comp, s, (x, y, bw, bh))
+        if not seeds:
+            dist = cv2.distanceTransform(core.astype(np.uint8), cv2.DIST_L2, 5)
+            cy, cx = np.unravel_index(dist.argmax(), dist.shape)
+            seeds = [(np.array([x, y, x + bw, y + bh], float), np.array([[cx, cy]], float))]
+        for box, pos in seeds:
+            if len(people) >= 254:
+                break
+            pts = np.concatenate([[box[:2], box[2:4]], pos, [[0, 0]]])
+            m, iou = _sam_decode(sam, emb, pts, [2, 3] + [1] * len(pos) + [-1], passes=2)
+            m = (m[:h, :w] > 0) & allowed & (lab == 0)
+            if iou < 0.7 or (m & comp).sum() < 0.3 * FAR_PERSON * pa:
+                continue
+            _add_far_person(lab, people, m, box, rgb, s)
+        rest = comp & (lab == 0)
+        # SAM can grab only a sleeve of a stacked figure; the leftover cut-out blob itself is the safer shape then.
+        if rest.sum() >= FAR_PERSON * pa and len(people) < 254:
+            ys, xs = np.nonzero(rest)
+            _add_far_person(lab, people, rest, np.array([xs.min(), ys.min(), xs.max(), ys.max()], float), rgb, s)
+    return drop
+
+
+def _far_seeds(rgb, comp, s, bbox):
+    """Pose boxes YOLOX finds when zoomed onto one missed blob, as (box, keypoints) in SAM coords."""
+    x, y, bw, bh = bbox
+    H, W = rgb.shape[:2]
+    m = 0.05
+    x0, y0 = max(0, int((x - m * bw) / s)), max(0, int((y - m * bh) / s))
+    x1, y1 = min(W, int((x + bw * (1 + m)) / s)), min(H, int((y + bh * (1 + m)) / s))
+    boxes = detect_people(rgb[y0:y1, x0:x1], score=WEAK_SCORE, nms=0.6)
+    seeds = []
+    h, w = comp.shape
+    for b in boxes[np.argsort(-boxes[:, 4])]:
+        b = b.copy()
+        b[[0, 2]] += x0
+        b[[1, 3]] += y0
+        k = keypoints(rgb, b)
+        k = k[k[:, 2] > KP_SCORE, :2] * s
+        if len(k) < 5:
+            continue
+        ki = np.clip(k.astype(int), 0, [w - 1, h - 1])
+        k = k[comp[ki[:, 1], ki[:, 0]]]
+        if len(k) < 5 or any(np.median(np.linalg.norm(k[:, None] - q[None], axis=2).min(1)) < SAME_PERSON * H * s for _, q in seeds):
+            continue
+        seeds.append((b[:4] * s, k))
+    return seeds
+
+
+def _add_far_person(lab, people, m, box, rgb, s):
+    h, w = lab.shape
+    lab[m] = len(people) + 1
+    bx = np.asarray(box, float) / s
+    kp = keypoints(rgb, bx)
+    on = m[np.clip((kp[:, 1] * s).astype(int), 0, h - 1), np.clip((kp[:, 0] * s).astype(int), 0, w - 1)]
+    kp[~on, 2] = 0
+    people.append((np.append(bx, 0.0), kp))
 
 
 SPUR_WIDTH, SPUR_LEN, HAND_LEN = 0.03, 0.08, 0.12
@@ -1177,6 +1310,27 @@ def _head_mask(sam, emb, k, region):
     return m
 
 
+PART_MIN = 0.006
+
+
+def _merge_specks(local, region):
+    """Studio watermarks, buttons and single pupils come out as tiny closed loops on the body; fold each into the
+    part around it."""
+    lim = PART_MIN * region.sum()
+    ids, counts = np.unique(local[region], return_counts=True)
+    ring_k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    for v, c in zip(ids, counts):
+        if c >= lim:
+            continue
+        m = (local == v) & region
+        ring = (cv2.dilate(m.astype(np.uint8), ring_k) > 0) & ~m & region
+        around = local[ring]
+        around = around[around != v]
+        if len(around):
+            vals, cn = np.unique(around, return_counts=True)
+            local[m] = vals[cn.argmax()]
+
+
 def person_parts(img: Image.Image, lab: np.ndarray, kps: np.ndarray) -> np.ndarray:
     """Per-person SAM segments (hair, face, sleeves, trousers...) as int labels person*1000+k; each person is
     encoded from its own crop because at whole-group scale a face is only a few pixels."""
@@ -1228,6 +1382,7 @@ def person_parts(img: Image.Image, lab: np.ndarray, kps: np.ndarray) -> np.ndarr
             head = _head_mask(sam, emb, k, region)
             if head is not None:
                 local[head] = 920
+        _merge_specks(local, region)
         local = cv2.resize(local.astype(np.float32), (x1 - x0, y1 - y0), interpolation=cv2.INTER_NEAREST).astype(np.int32)
         sub = seg[y0:y1, x0:x1]
         rf = region_full[y0:y1, x0:x1]
@@ -1240,7 +1395,7 @@ def person_parts(img: Image.Image, lab: np.ndarray, kps: np.ndarray) -> np.ndarr
 def _split_cached(img, body, soft=None):
     os.makedirs(CACHE_DIR, exist_ok=True)
     big = _providers()[0] != "CPUExecutionProvider"
-    key = hashlib.sha1(np.ascontiguousarray(body).tobytes() + img.convert("RGB").tobytes() + (b"" if soft is None else np.ascontiguousarray(soft).tobytes()) + (b"split18-L" if big else b"split18-B")).hexdigest()
+    key = hashlib.sha1(np.ascontiguousarray(body).tobytes() + img.convert("RGB").tobytes() + (b"" if soft is None else np.ascontiguousarray(soft).tobytes()) + (b"split24-L" if big else b"split24-B")).hexdigest()
     path = os.path.join(CACHE_DIR, key + ".split.npz")
     if os.path.exists(path):
         try:
@@ -1269,9 +1424,38 @@ def _edge_paths(e, st, unit, W, H):
     return _postprocess(trace_skeleton(skeletonize(e)), 1.0, st, unit, W, H) if e.any() else []
 
 
+PAD_STD, PAD_DIFF, PAD_JUMP, PAD_MAX = 6.0, 10.0, 30.0, 0.08
+
+
+def _frame_pad(rgb):
+    """Widths (left, top, right, bottom) of a flat-colour border printed around the photo; people cut off at the
+    inner edge would otherwise get an outline along it."""
+    H, W = rgb.shape[:2]
+    a = rgb.astype(np.float32)
+
+    def side(lines, n):
+        ref = lines(0).mean(0)
+        k = 0
+        while k < n and lines(k).std(0).max() < PAD_STD and np.abs(lines(k).mean(0) - ref).max() < PAD_DIFF:
+            k += 1
+        # A printed frame ends in a sharp step; a plain studio wall just fades, so it is not a frame.
+        if not 2 <= k < n or np.abs(lines(k + 1).mean(0) - ref).max() < PAD_JUMP:
+            return 0
+        return k
+
+    return (side(lambda i: a[:, i], int(PAD_MAX * W)), side(lambda i: a[i], int(PAD_MAX * H)),
+            side(lambda i: a[:, W - 1 - i], int(PAD_MAX * W)), side(lambda i: a[H - 1 - i], int(PAD_MAX * H)))
+
+
 def render_photo(img: Image.Image, st: Style, mask: np.ndarray = None) -> Image.Image:
     img = img.convert("RGB")
     W, H = img.size
+    l, t, r, b = _frame_pad(np.array(img))
+    if l or t or r or b:
+        inner = render_photo(img.crop((l, t, W - r, H - b)), st, None if mask is None else mask[t:H - b, l:W - r])
+        out = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        out.paste(inner, (l, t))
+        return out
     unit = H / 1000.0
     if mask is None:
         mask = subject_mask(img, resolve_model(img, st.model)[0])
